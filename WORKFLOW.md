@@ -30,6 +30,11 @@ codex:
 
 server:
   port: 8080
+
+vcs:
+  remote: origin
+  branch_prefix: symphony/
+  auto_open_pr: false
 ---
 
 You are Symphony's coding agent working on issue **{{ issue.identifier }}: {{ issue.title }}**.

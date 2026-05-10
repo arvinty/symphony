@@ -123,6 +123,16 @@ pub struct ServerConfig {
     pub port: Option<u16>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct VcsConfig {
+    #[serde(default)]
+    pub remote: Option<String>,
+    #[serde(default)]
+    pub branch_prefix: Option<String>,
+    #[serde(default)]
+    pub auto_open_pr: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServiceConfig {
     pub tracker: TrackerConfig,
@@ -140,6 +150,8 @@ pub struct ServiceConfig {
     pub server: Option<ServerConfig>,
     #[serde(default)]
     pub policy: Option<crate::policy::Policy>,
+    #[serde(default)]
+    pub vcs: Option<VcsConfig>,
 }
 
 #[derive(Debug, Clone)]
@@ -152,6 +164,7 @@ pub struct EffectiveConfig {
     pub codex: CodexConfig,
     pub server: ServerConfig,
     pub policy: crate::policy::Policy,
+    pub vcs: VcsConfig,
 }
 
 impl EffectiveConfig {
@@ -200,6 +213,7 @@ impl EffectiveConfig {
             }),
             server: cfg.server.unwrap_or_default(),
             policy: cfg.policy.unwrap_or_default(),
+            vcs: cfg.vcs.unwrap_or_default(),
         })
     }
 

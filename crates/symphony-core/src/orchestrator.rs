@@ -34,6 +34,8 @@ struct RetryRequest {
 struct RunRequest {
     issue: Issue,
     attempt: Option<u32>,
+    prompt_override: Option<String>,
+    follow_up_count: u32,
 }
 
 #[derive(Clone)]
@@ -97,8 +99,29 @@ impl Orchestrator {
         self.inner.approval_router.clone()
     }
 
-    pub async fn retry_open_pr(&self, _identifier: &str) -> anyhow::Result<String> {
-        Err(anyhow::anyhow!("not_implemented"))
+    pub async fn retry_open_pr(&self, identifier: &str) -> anyhow::Result<String> {
+        let snap = self.snapshot().await;
+        let run = snap
+            .running
+            .values()
+            .find(|r| r.issue.identifier == identifier)
+            .ok_or_else(|| anyhow::anyhow!("issue not currently running"))?
+            .clone();
+        let cfg = self.inner.config.read().await.clone();
+        let remote = cfg
+            .vcs
+            .remote
+            .as_deref()
+            .ok_or_else(|| anyhow::anyhow!("no vcs.remote configured"))?
+            .to_string();
+        let prefix = cfg.vcs.branch_prefix.as_deref().unwrap_or("symphony/").to_string();
+        let branch = format!("{prefix}{identifier}");
+        let workspace_path = std::path::PathBuf::from(&run.workspace_path);
+        crate::vcs::push_branch(&workspace_path, &remote, &branch).await?;
+        let title = format!("{}: {}", identifier, run.issue.title);
+        let body = format!("Authored by Symphony for {}.", identifier);
+        let url = crate::vcs::open_pr(&workspace_path, &title, &body).await?;
+        Ok(url)
     }
 
     pub async fn snapshot(&self) -> OrchestratorState {
@@ -151,7 +174,7 @@ impl Orchestrator {
                 while let Some(req) = rx.recv().await {
                     let inner = this.clone();
                     tokio::spawn(async move {
-                        inner.run_worker(req.issue, req.attempt).await;
+                        inner.run_worker(req).await;
                     });
                 }
             });
@@ -272,10 +295,12 @@ impl Orchestrator {
             s.claimed.insert(issue.id.clone());
             s.retry_attempts.remove(&issue.id);
         }
-        let _ = self.inner.run_tx.send(RunRequest { issue, attempt: None });
+        let _ = self.inner.run_tx.send(RunRequest { issue, attempt: None, prompt_override: None, follow_up_count: 0 });
     }
 
-    async fn run_worker(&self, mut issue: Issue, attempt: Option<u32>) {
+    async fn run_worker(&self, request: RunRequest) {
+        let mut issue = request.issue.clone();
+        let attempt = request.attempt;
         let cfg = self.inner.config.read().await.clone();
         let workflow = self.inner.workflow.read().await.clone();
         let ws_mgr = self.inner.workspace.read().await.clone();
@@ -295,13 +320,17 @@ impl Orchestrator {
             return;
         }
 
-        let prompt = match render_prompt(&workflow.prompt_template, &issue, attempt) {
-            Ok(p) if !p.trim().is_empty() => p,
-            Ok(_) => "You are working on an issue from the issue tracker.".to_string(),
-            Err(e) => {
-                tracing::error!(issue_identifier = %issue.identifier, "prompt_render_failed: {e}");
-                self.fail_and_schedule_retry(&issue, e.to_string(), attempt.unwrap_or(0));
-                return;
+        let prompt = if let Some(ref p) = request.prompt_override {
+            p.clone()
+        } else {
+            match render_prompt(&workflow.prompt_template, &issue, attempt) {
+                Ok(p) if !p.trim().is_empty() => p,
+                Ok(_) => "You are working on an issue from the issue tracker.".to_string(),
+                Err(e) => {
+                    tracing::error!(issue_identifier = %issue.identifier, "prompt_render_failed: {e}");
+                    self.fail_and_schedule_retry(&issue, e.to_string(), attempt.unwrap_or(0));
+                    return;
+                }
             }
         };
 
@@ -404,7 +433,65 @@ impl Orchestrator {
         }
 
         if last_outcome_success {
-            self.schedule_retry(&issue, 1, CONTINUATION_DELAY_MS, None);
+            let mut follow_up: Option<String> = None;
+
+            // VCS pipeline — best-effort, only on first (non-follow-up) run.
+            if request.follow_up_count == 0 {
+                if let Some(remote) = cfg.vcs.remote.as_deref() {
+                    let prefix = cfg.vcs.branch_prefix.as_deref().unwrap_or("symphony/");
+                    let branch = format!("{prefix}{}", issue.identifier);
+                    let bus = self.event_bus();
+                    match crate::vcs::push_branch(&workspace.path, remote, &branch).await {
+                        Ok(()) => {
+                            let _ = bus.send(crate::events::broadcast::OrchestratorEvent::VcsPushed {
+                                issue_id: issue.id.clone(),
+                                branch: branch.clone(),
+                            });
+                            if cfg.vcs.auto_open_pr {
+                                let title = format!("{}: {}", issue.identifier, issue.title);
+                                let body = format!("Authored by Symphony for {}.", issue.identifier);
+                                match crate::vcs::open_pr(&workspace.path, &title, &body).await {
+                                    Ok(url) => {
+                                        let _ = bus.send(crate::events::broadcast::OrchestratorEvent::PrOpened {
+                                            issue_id: issue.id.clone(),
+                                            url: url.clone(),
+                                        });
+                                        follow_up = Some(format!(
+                                            "PR opened at {url}. Call `linear_graphql.link_pull_request` with that URL and a short title to attach it to issue {}, then end the turn.",
+                                            issue.identifier
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        let _ = bus.send(crate::events::broadcast::OrchestratorEvent::VcsError {
+                                            issue_id: issue.id.clone(),
+                                            stage: "open_pr".into(),
+                                            message: e.to_string(),
+                                        });
+                                    }
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            let _ = bus.send(crate::events::broadcast::OrchestratorEvent::VcsError {
+                                issue_id: issue.id.clone(),
+                                stage: "push".into(),
+                                message: e.to_string(),
+                            });
+                        }
+                    }
+                }
+            }
+
+            if let Some(prompt) = follow_up {
+                let _ = self.inner.run_tx.send(RunRequest {
+                    issue: issue.clone(),
+                    attempt: None,
+                    prompt_override: Some(prompt),
+                    follow_up_count: 1,
+                });
+            } else {
+                self.schedule_retry(&issue, 1, CONTINUATION_DELAY_MS, None);
+            }
         } else {
             self.fail_and_schedule_retry(&issue, last_error.unwrap_or_else(|| "unknown".into()), attempt.unwrap_or(0));
         }
@@ -555,7 +642,7 @@ impl Orchestrator {
                     let mut s = self.inner.state.lock().await;
                     s.retry_attempts.remove(&issue_id);
                 }
-                let _ = self.inner.run_tx.send(RunRequest { issue, attempt: Some(attempt) });
+                let _ = self.inner.run_tx.send(RunRequest { issue, attempt: Some(attempt), prompt_override: None, follow_up_count: 0 });
             }
         }
     }

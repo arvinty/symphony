@@ -1,0 +1,100 @@
+# Symphony + Linear-clone
+
+A Rust implementation of the [Symphony](https://github.com/openai/symphony) agent
+orchestrator, plus a self-hosted Linear-shaped issue tracker so it can be exercised
+end-to-end without depending on Linear.com.
+
+## Layout
+
+```
+crates/
+  symphony-core/        Core orchestrator library (workflow, config, state machine, harnesses).
+  symphony/             `symphony` daemon binary + HTTP dashboard.
+  linear-clone/         `linear-clone` backend (axum + async-graphql + SQLite).
+web/                    React + Tailwind UI (Linear-styled dark theme).
+WORKFLOW.md             Sample workflow used by `symphony`.
+issues.mock.json        Sample tracker payload for the file-mock adapter.
+```
+
+## Agent harnesses
+
+Symphony's `agent.harness` config selects which subprocess runs in each per-issue
+workspace. All harnesses use Claude as the model endpoint.
+
+| Harness        | Spawned                                                        | Notes                                                |
+| -------------- | -------------------------------------------------------------- | ---------------------------------------------------- |
+| `claude_code`  | `claude -p <prompt> --output-format stream-json --verbose`     | Uses your existing Claude Code subscription auth.   |
+| `hermes`       | `hermes run --provider anthropic --model <model> --json …`     | Requires Nous Research's Hermes CLI on `$PATH`.     |
+| `codex_stub`   | (no subprocess)                                                | Returns success immediately; useful for plumbing.   |
+
+Switch harnesses by editing `WORKFLOW.md` — Symphony hot-reloads the config.
+
+## Running
+
+### 1. Build the workspace
+
+```pwsh
+cargo build --workspace
+```
+
+### 2. Run Symphony against the file-mock tracker
+
+```pwsh
+cargo run -p symphony -- --workflow WORKFLOW.md
+```
+
+Open <http://127.0.0.1:8080> for the operator dashboard.
+JSON state at <http://127.0.0.1:8080/api/v1/state>.
+
+### 3. Run the Linear clone (separate terminal)
+
+```pwsh
+cargo run -p linear-clone -- --port 4000
+cd web
+npm install
+npm run dev   # dev: http://localhost:5173 (proxies /graphql to :4000)
+# or for production:
+npm run build && cd ..
+cargo run -p linear-clone -- --port 4000
+```
+
+Then point Symphony at the clone by editing `WORKFLOW.md`:
+
+```yaml
+tracker:
+  kind: linear
+  endpoint: http://127.0.0.1:4000/graphql
+  api_key: dev-token       # not validated locally
+  project_slug: symphony
+```
+
+## Spec coverage
+
+This is **v0.1**. Implemented:
+
+- Workflow loader (front matter + body), Liquid template rendering with strict checking.
+- Config layer with `$VAR` indirection, defaults, validation.
+- Tracker trait with Linear (paginated GraphQL) and file-mock adapters.
+- Workspace manager with sanitization + path-inside-root invariant + lifecycle hooks.
+- Orchestrator state machine: claim/run/retry/release, dispatch eligibility,
+  per-state and global concurrency, blocker-on-Todo gating, priority/created_at sort.
+- Continuation retries (~1s) and exponential backoff failure retries.
+- Reconciliation: stall detection (event-inactivity) + tracker state refresh.
+- Startup terminal-state workspace cleanup.
+- Dynamic `WORKFLOW.md` reload via filesystem watch.
+- HTTP extension: `GET /`, `GET /api/v1/state`, `GET /api/v1/<id>`, `POST /api/v1/refresh`.
+- Two coding-agent harnesses (Claude Code, Hermes) + Codex stub.
+
+Deliberately **not** in v0.1 (would extend scope significantly):
+
+- Full Codex app-server protocol client (replaced by `claude` CLI / `hermes` CLI subprocess harnesses).
+- `linear_graphql` client-side tool extension end-to-end (the trait exists; bridging to subprocess
+  harnesses needs harness-specific tool advertisements).
+- Pixel-perfect Linear UI parity (the UI is Linear-styled but not a 1:1 reproduction).
+- Approval/sandbox policy plumbed through to harnesses (Claude Code defaults to `acceptEdits`).
+
+## Running symphony with the live Linear-clone
+
+1. `cargo run -p linear-clone -- --port 4000`
+2. Edit `WORKFLOW.md` to set `tracker.kind: linear` and `endpoint: http://127.0.0.1:4000/graphql`.
+3. `cargo run -p symphony` — it'll poll your local clone and dispatch agents per issue.

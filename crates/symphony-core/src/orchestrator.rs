@@ -27,6 +27,7 @@ struct RetryRequest {
     delay_ms: u64,
     #[allow(dead_code)]
     error: Option<String>,
+    policy: crate::policy::Policy,
 }
 
 /// One run dispatch, drained by the run-dispatcher task.
@@ -36,6 +37,7 @@ struct RunRequest {
     attempt: Option<u32>,
     prompt_override: Option<String>,
     follow_up_count: u32,
+    policy: crate::policy::Policy,
 }
 
 #[derive(Clone)]
@@ -188,7 +190,7 @@ impl Orchestrator {
                     let inner = this.clone();
                     tokio::spawn(async move {
                         tokio::time::sleep(Duration::from_millis(req.delay_ms)).await;
-                        inner.handle_retry_due(req.issue_id, req.attempt).await;
+                        inner.handle_retry_due(req.issue_id, req.attempt, req.policy).await;
                     });
                 }
             });
@@ -295,7 +297,8 @@ impl Orchestrator {
             s.claimed.insert(issue.id.clone());
             s.retry_attempts.remove(&issue.id);
         }
-        let _ = self.inner.run_tx.send(RunRequest { issue, attempt: None, prompt_override: None, follow_up_count: 0 });
+        let cfg = self.inner.config.read().await.clone();
+        let _ = self.inner.run_tx.send(RunRequest { issue, attempt: None, prompt_override: None, follow_up_count: 0, policy: cfg.policy.clone() });
     }
 
     async fn run_worker(&self, request: RunRequest) {
@@ -309,14 +312,14 @@ impl Orchestrator {
             Ok(w) => w,
             Err(e) => {
                 tracing::error!(issue_identifier = %issue.identifier, "workspace_failed: {e}");
-                self.fail_and_schedule_retry(&issue, e.to_string(), attempt.unwrap_or(0));
+                self.fail_and_schedule_retry(&issue, e.to_string(), attempt.unwrap_or(0), request.policy.clone());
                 return;
             }
         };
 
         if let Err(e) = ws_mgr.before_run(&workspace).await {
             tracing::error!(issue_identifier = %issue.identifier, "before_run_failed: {e}");
-            self.fail_and_schedule_retry(&issue, e.to_string(), attempt.unwrap_or(0));
+            self.fail_and_schedule_retry(&issue, e.to_string(), attempt.unwrap_or(0), request.policy.clone());
             return;
         }
 
@@ -328,7 +331,7 @@ impl Orchestrator {
                 Ok(_) => "You are working on an issue from the issue tracker.".to_string(),
                 Err(e) => {
                     tracing::error!(issue_identifier = %issue.identifier, "prompt_render_failed: {e}");
-                    self.fail_and_schedule_retry(&issue, e.to_string(), attempt.unwrap_or(0));
+                    self.fail_and_schedule_retry(&issue, e.to_string(), attempt.unwrap_or(0), request.policy.clone());
                     return;
                 }
             }
@@ -379,7 +382,7 @@ impl Orchestrator {
                     tx,
                     bus: self.event_bus(),
                     approval_router: self.approval_router(),
-                    policy: cfg.policy.clone(),
+                    policy: request.policy.clone(),
                     linear_token,
                     linear_endpoint: cfg.tracker.endpoint.clone(),
                     issue_id: issue.id.clone(),
@@ -488,12 +491,13 @@ impl Orchestrator {
                     attempt: None,
                     prompt_override: Some(prompt),
                     follow_up_count: 1,
+                    policy: request.policy.clone(),
                 });
             } else {
-                self.schedule_retry(&issue, 1, CONTINUATION_DELAY_MS, None);
+                self.schedule_retry(&issue, 1, CONTINUATION_DELAY_MS, None, request.policy.clone());
             }
         } else {
-            self.fail_and_schedule_retry(&issue, last_error.unwrap_or_else(|| "unknown".into()), attempt.unwrap_or(0));
+            self.fail_and_schedule_retry(&issue, last_error.unwrap_or_else(|| "unknown".into()), attempt.unwrap_or(0), request.policy.clone());
         }
     }
 
@@ -547,17 +551,17 @@ impl Orchestrator {
         }
     }
 
-    fn fail_and_schedule_retry(&self, issue: &Issue, err: String, prev_attempt: u32) {
+    fn fail_and_schedule_retry(&self, issue: &Issue, err: String, prev_attempt: u32, policy: crate::policy::Policy) {
         let attempt = prev_attempt + 1;
         // Read max backoff from a snapshot via blocking try_lock — we can't await here.
         // Use the unbounded retry channel and let the dispatcher compute the cap when it
         // fires the timer.
         let backoff = (RETRY_BASE_MS.saturating_mul(1u64 << (attempt.saturating_sub(1).min(20))))
             .min(/* cap is enforced again at dispatcher */ u64::MAX);
-        self.schedule_retry(issue, attempt, backoff, Some(err));
+        self.schedule_retry(issue, attempt, backoff, Some(err), policy);
     }
 
-    fn schedule_retry(&self, issue: &Issue, attempt: u32, delay_ms: u64, err: Option<String>) {
+    fn schedule_retry(&self, issue: &Issue, attempt: u32, delay_ms: u64, err: Option<String>, policy: crate::policy::Policy) {
         // Cap delay against the configured max backoff using a try_read snapshot if possible;
         // otherwise the dispatcher will at least cap to a hard ceiling.
         let capped = if let Ok(cfg) = self.inner.config.try_read() {
@@ -571,6 +575,7 @@ impl Orchestrator {
             attempt,
             delay_ms: capped,
             error: err.clone(),
+            policy: policy.clone(),
         };
         // Record retry entry synchronously via blocking try_lock; if contended, fall back.
         if let Ok(mut s) = self.inner.state.try_lock() {
@@ -608,7 +613,7 @@ impl Orchestrator {
         let _ = self.inner.retry_tx.send(req);
     }
 
-    async fn handle_retry_due(&self, issue_id: String, attempt: u32) {
+    async fn handle_retry_due(&self, issue_id: String, attempt: u32, policy: crate::policy::Policy) {
         let cfg = self.inner.config.read().await.clone();
         let tracker = self.inner.tracker.read().await.clone();
         let candidates = match tracker.fetch_candidate_issues().await {
@@ -635,14 +640,14 @@ impl Orchestrator {
                 }
                 let running_count = self.inner.state.lock().await.running.len() as u32;
                 if running_count >= cfg.agent.max_concurrent_agents {
-                    self.schedule_retry(&issue, attempt, 5_000, Some("no available orchestrator slots".into()));
+                    self.schedule_retry(&issue, attempt, 5_000, Some("no available orchestrator slots".into()), policy);
                     return;
                 }
                 {
                     let mut s = self.inner.state.lock().await;
                     s.retry_attempts.remove(&issue_id);
                 }
-                let _ = self.inner.run_tx.send(RunRequest { issue, attempt: Some(attempt), prompt_override: None, follow_up_count: 0 });
+                let _ = self.inner.run_tx.send(RunRequest { issue, attempt: Some(attempt), prompt_override: None, follow_up_count: 0, policy });
             }
         }
     }

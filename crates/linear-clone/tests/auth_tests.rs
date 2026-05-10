@@ -2,6 +2,34 @@ use linear_clone::{build_router_for_test_with_auth, init_pool_for_test};
 use serde_json::json;
 use tower::ServiceExt;
 
+#[tokio::test]
+async fn admin_mint_token_requires_secret() {
+    std::env::set_var("LINEAR_CLONE_ADMIN_TOKEN", "test-admin");
+    let pool = init_pool_for_test().await;
+    let store = linear_clone::auth::TokenStore::default();
+    let app = build_router_for_test_with_auth(pool, store);
+
+    // Missing secret → 401
+    let req = axum::http::Request::builder()
+        .method("POST").uri("/admin/tokens")
+        .header("content-type","application/json")
+        .body(axum::body::Body::from(r#"{"issue_id":"iss_1"}"#)).unwrap();
+    let resp = app.clone().oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), 401);
+
+    // With correct secret → 200 + token in body
+    let req = axum::http::Request::builder()
+        .method("POST").uri("/admin/tokens")
+        .header("content-type","application/json")
+        .header("x-admin-token","test-admin")
+        .body(axum::body::Body::from(r#"{"issue_id":"iss_1"}"#)).unwrap();
+    let resp = app.oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), 200);
+    let bytes = axum::body::to_bytes(resp.into_body(), 1<<20).await.unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    assert!(v["token"].as_str().unwrap_or("").starts_with("lct_"));
+}
+
 async fn first_two_issue_ids(pool: &sqlx::SqlitePool) -> (String, String) {
     let rows: Vec<(String,)> = sqlx::query_as("SELECT id FROM issues ORDER BY identifier LIMIT 2")
         .fetch_all(pool)

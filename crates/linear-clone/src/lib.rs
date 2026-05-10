@@ -27,6 +27,7 @@ pub fn build_router(state: AppState) -> Router {
         .route("/graphql", post(graphql_handler))
         .route("/graphql", get(graphql_playground))
         .route("/api/health", get(|| async { "ok" }))
+        .route("/admin/tokens", post(auth::admin_mint_token))
         .nest("/api", rest::router())
         .with_state(state)
 }

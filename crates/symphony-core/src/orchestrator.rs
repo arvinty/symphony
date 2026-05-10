@@ -340,6 +340,7 @@ impl Orchestrator {
                 "Continue working on this issue. If complete, conclude.".to_string()
             };
 
+            let linear_token = mint_linear_token(&cfg, &issue.id).await;
             let outcome = tokio::time::timeout(
                 Duration::from_millis(cfg.codex.turn_timeout_ms),
                 harness.run(HarnessContext {
@@ -350,7 +351,7 @@ impl Orchestrator {
                     bus: self.event_bus(),
                     approval_router: self.approval_router(),
                     policy: cfg.policy.clone(),
-                    linear_token: None,                  // Task 13 fills this in
+                    linear_token,
                     linear_endpoint: cfg.tracker.endpoint.clone(),
                     issue_id: issue.id.clone(),
                 }),
@@ -640,6 +641,28 @@ impl Orchestrator {
         }
         Ok(())
     }
+}
+
+async fn mint_linear_token(cfg: &EffectiveConfig, issue_id: &str) -> Option<String> {
+    let endpoint = cfg.tracker.endpoint.as_ref()?;
+    if !cfg.tracker.kind.eq_ignore_ascii_case("linear") {
+        return None;
+    }
+    let admin = std::env::var("LINEAR_CLONE_ADMIN_TOKEN").ok()?;
+    let cli = reqwest::Client::new();
+    // endpoint is `<base>/graphql` — mint URL is `<base>/admin/tokens`.
+    let mint_url = endpoint.trim_end_matches("/graphql").to_string() + "/admin/tokens";
+    let resp = cli.post(&mint_url)
+        .header("x-admin-token", admin)
+        .json(&serde_json::json!({"issue_id": issue_id}))
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    let v: serde_json::Value = resp.json().await.ok()?;
+    v["token"].as_str().map(str::to_string)
 }
 
 pub fn sort_candidates(mut issues: Vec<Issue>) -> Vec<Issue> {

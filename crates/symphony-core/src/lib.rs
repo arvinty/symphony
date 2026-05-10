@@ -2,6 +2,7 @@ pub mod model;
 pub mod error;
 pub mod workflow;
 pub mod config;
+pub mod policy;
 pub mod prompt;
 pub mod tracker;
 pub mod workspace;

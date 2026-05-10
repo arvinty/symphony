@@ -138,6 +138,8 @@ pub struct ServiceConfig {
     pub codex: Option<CodexConfig>,
     #[serde(default)]
     pub server: Option<ServerConfig>,
+    #[serde(default)]
+    pub policy: Option<crate::policy::Policy>,
 }
 
 #[derive(Debug, Clone)]
@@ -149,6 +151,7 @@ pub struct EffectiveConfig {
     pub agent: AgentConfig,
     pub codex: CodexConfig,
     pub server: ServerConfig,
+    pub policy: crate::policy::Policy,
 }
 
 impl EffectiveConfig {
@@ -196,6 +199,7 @@ impl EffectiveConfig {
                 stall_timeout_ms: default_stall_timeout(),
             }),
             server: cfg.server.unwrap_or_default(),
+            policy: cfg.policy.unwrap_or_default(),
         })
     }
 

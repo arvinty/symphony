@@ -1,7 +1,14 @@
+/// NOTE: Claude Code's hosted permission UI is the source of truth for tool gating.
+/// Symphony surfaces tool_use events on the bus so the dashboard can display them,
+/// but cannot itself approve/deny tool calls — the `--permission-mode` flag tells
+/// Claude Code which decisions to take. Slice 2 (Codex) is where Symphony fully
+/// owns the approval round-trip.
+
 use super::{Harness, HarnessContext, HarnessOutcome};
 use crate::error::{Result, SymphonyError};
 use crate::events::{AgentEvent, AgentEventKind};
 use crate::model::UsageTokens;
+use crate::policy::{Policy, PermissionMode};
 use async_trait::async_trait;
 use chrono::Utc;
 use std::process::Stdio;
@@ -14,6 +21,20 @@ use tokio::process::Command;
 #[derive(Default, Clone)]
 pub struct ClaudeCodeHarness {}
 
+fn translate_policy_args(p: &Policy) -> Vec<String> {
+    let mode = match p.permission_mode {
+        PermissionMode::AcceptEdits => "acceptEdits",
+        PermissionMode::RequireApproval => "default",
+        PermissionMode::ReadOnly => "plan",
+    };
+    let mut args: Vec<String> = vec!["--permission-mode".into(), mode.into()];
+    if !p.allowed_tools.is_empty() {
+        args.push("--allowedTools".into());
+        args.push(p.allowed_tools.join(","));
+    }
+    args
+}
+
 #[async_trait]
 impl Harness for ClaudeCodeHarness {
     fn name(&self) -> &'static str {
@@ -21,19 +42,35 @@ impl Harness for ClaudeCodeHarness {
     }
 
     async fn run(&self, ctx: HarnessContext<'_>) -> Result<HarnessOutcome> {
-        let HarnessContext { workspace, prompt, cfg: _, tx, .. } = ctx;
+        let issue_id_clone = ctx.issue_id.clone();
+        let HarnessContext { workspace, prompt, cfg: _, tx, bus, policy, linear_token, linear_endpoint, issue_id, .. } = ctx;
+
         let mut cmd = Command::new("claude");
         cmd.arg("-p")
             .arg(prompt)
             .arg("--output-format")
             .arg("stream-json")
-            .arg("--verbose")
-            .arg("--permission-mode")
-            .arg("acceptEdits")
-            .current_dir(workspace)
+            .arg("--verbose");
+
+        for arg in translate_policy_args(&policy) {
+            cmd.arg(arg);
+        }
+
+        cmd.current_dir(workspace)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .stdin(Stdio::null());
+
+        // Wire MCP config and linear env vars when credentials are available
+        if let (Some(token), Some(endpoint)) = (linear_token.as_ref(), linear_endpoint.as_ref()) {
+            let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("symphony"));
+            let mcp_json = crate::harness::mcp_bridge::generate_mcp_config_json(&exe, &issue_id);
+            let mcp_path = workspace.join(".symphony-mcp.json");
+            std::fs::write(&mcp_path, mcp_json).ok();
+            cmd.arg("--mcp-config").arg(&mcp_path);
+            cmd.env("SYMPHONY_LINEAR_TOKEN", token);
+            cmd.env("SYMPHONY_LINEAR_ENDPOINT", endpoint);
+        }
 
         let mut child = cmd.spawn().map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
@@ -48,6 +85,7 @@ impl Harness for ClaudeCodeHarness {
 
         let tx_stdout = tx.clone();
         let pid_clone = pid.clone();
+        let bus_clone = bus.clone();
         let mut had_error = false;
 
         let stdout_handle = tokio::spawn(async move {
@@ -60,6 +98,21 @@ impl Harness for ClaudeCodeHarness {
                 }
                 match serde_json::from_str::<serde_json::Value>(&line) {
                     Ok(v) => {
+                        // Surface tool_use content blocks as OrchestratorEvent::ToolCall
+                        if let Some(arr) = v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_array()) {
+                            for block in arr {
+                                if block.get("type").and_then(|s| s.as_str()) == Some("tool_use") {
+                                    let name = block.get("name").and_then(|s| s.as_str()).unwrap_or("").to_string();
+                                    let input = block.get("input").cloned().unwrap_or(serde_json::json!({}));
+                                    let _ = bus_clone.send(crate::events::broadcast::OrchestratorEvent::ToolCall {
+                                        issue_id: issue_id_clone.clone(),
+                                        tool: name,
+                                        input,
+                                    });
+                                }
+                            }
+                        }
+
                         let ev = translate_claude_event(&v, pid_clone.as_deref());
                         if ev.kind == AgentEventKind::SessionStarted {
                             if let Some(t) = ev.thread_id.clone() {

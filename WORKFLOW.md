@@ -31,6 +31,12 @@ codex:
 server:
   port: 8080
 
+policy:
+  permission_mode: accept_edits   # accept_edits | require_approval | read_only
+  sandbox: workspace_write        # unrestricted | workspace_write | read_only
+  allowed_tools: []
+  approval_timeout_ms: 300000
+
 vcs:
   remote: origin
   branch_prefix: symphony/

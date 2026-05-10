@@ -11,7 +11,7 @@ pub enum PermissionMode {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum SandboxProfile {
-    None,
+    Unrestricted,
     WorkspaceWrite,
     ReadOnly,
 }
@@ -24,6 +24,8 @@ pub struct Policy {
     pub sandbox: SandboxProfile,
     #[serde(default)]
     pub allowed_tools: Vec<String>,
+    /// Consumed by `harness::approvals::ApprovalRouter` (Task 8) when the harness
+    /// is in `RequireApproval` mode and the operator has not responded.
     #[serde(default = "default_timeout")]
     pub approval_timeout_ms: u64,
 }

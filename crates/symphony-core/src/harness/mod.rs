@@ -31,7 +31,7 @@ pub struct HarnessOutcome {
     pub error: Option<String>,
 }
 
-pub fn select_harness(name: &str) -> Box<dyn Harness> {
+pub fn select_harness(name: &str) -> Box<dyn Harness + Send + Sync> {
     match name {
         "claude_code" | "claude" | "claude-code" => Box::new(claude_code::ClaudeCodeHarness::default()),
         "hermes" => Box::new(hermes::HermesHarness::default()),

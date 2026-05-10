@@ -12,10 +12,28 @@ use chrono::Utc;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::{mpsc, Mutex, RwLock};
-use tokio::task::JoinHandle;
 
 const CONTINUATION_DELAY_MS: u64 = 1_000;
 const RETRY_BASE_MS: u64 = 10_000;
+
+/// One scheduled retry, drained by the retry-dispatcher task.
+#[derive(Debug, Clone)]
+struct RetryRequest {
+    issue_id: String,
+    #[allow(dead_code)]
+    identifier: String,
+    attempt: u32,
+    delay_ms: u64,
+    #[allow(dead_code)]
+    error: Option<String>,
+}
+
+/// One run dispatch, drained by the run-dispatcher task.
+#[derive(Debug, Clone)]
+struct RunRequest {
+    issue: Issue,
+    attempt: Option<u32>,
+}
 
 #[derive(Clone)]
 pub struct Orchestrator {
@@ -29,7 +47,10 @@ struct OrchestratorInner {
     workspace: RwLock<WorkspaceManager>,
     state: Mutex<OrchestratorState>,
     shutdown: tokio::sync::Notify,
-    workers: Mutex<Vec<JoinHandle<()>>>,
+    run_tx: mpsc::UnboundedSender<RunRequest>,
+    run_rx: Mutex<Option<mpsc::UnboundedReceiver<RunRequest>>>,
+    retry_tx: mpsc::UnboundedSender<RetryRequest>,
+    retry_rx: Mutex<Option<mpsc::UnboundedReceiver<RetryRequest>>>,
 }
 
 impl Orchestrator {
@@ -45,6 +66,8 @@ impl Orchestrator {
             started_at: Some(Utc::now()),
             ..Default::default()
         };
+        let (run_tx, run_rx) = mpsc::unbounded_channel();
+        let (retry_tx, retry_rx) = mpsc::unbounded_channel();
         Self {
             inner: Arc::new(OrchestratorInner {
                 workflow: RwLock::new(workflow),
@@ -53,7 +76,10 @@ impl Orchestrator {
                 workspace: RwLock::new(workspace),
                 state: Mutex::new(state),
                 shutdown: tokio::sync::Notify::new(),
-                workers: Mutex::new(Vec::new()),
+                run_tx,
+                run_rx: Mutex::new(Some(run_rx)),
+                retry_tx,
+                retry_rx: Mutex::new(Some(retry_rx)),
             }),
         }
     }
@@ -67,11 +93,11 @@ impl Orchestrator {
     }
 
     pub async fn reload(&self, workflow: WorkflowDefinition, config: EffectiveConfig) -> Result<()> {
-        let mut s = self.inner.state.lock().await;
-        s.poll_interval_ms = config.polling.interval_ms;
-        s.max_concurrent_agents = config.agent.max_concurrent_agents;
-        drop(s);
-        // Rebuild tracker if config materially changed
+        {
+            let mut s = self.inner.state.lock().await;
+            s.poll_interval_ms = config.polling.interval_ms;
+            s.max_concurrent_agents = config.agent.max_concurrent_agents;
+        }
         let new_tracker = build_tracker(&config)?;
         let new_workspace =
             WorkspaceManager::new(config.workspace_root.clone(), config.hooks.clone());
@@ -100,6 +126,35 @@ impl Orchestrator {
 
     pub async fn run(&self) {
         self.startup_cleanup().await;
+
+        // Spawn run-dispatcher
+        if let Some(mut rx) = self.inner.run_rx.lock().await.take() {
+            let this = self.clone();
+            tokio::spawn(async move {
+                while let Some(req) = rx.recv().await {
+                    let inner = this.clone();
+                    tokio::spawn(async move {
+                        inner.run_worker(req.issue, req.attempt).await;
+                    });
+                }
+            });
+        }
+
+        // Spawn retry-dispatcher
+        if let Some(mut rx) = self.inner.retry_rx.lock().await.take() {
+            let this = self.clone();
+            tokio::spawn(async move {
+                while let Some(req) = rx.recv().await {
+                    let inner = this.clone();
+                    tokio::spawn(async move {
+                        tokio::time::sleep(Duration::from_millis(req.delay_ms)).await;
+                        inner.handle_retry_due(req.issue_id, req.attempt).await;
+                    });
+                }
+            });
+        }
+
+        // Immediate first tick
         let first = self.clone();
         tokio::spawn(async move { first.tick().await });
 
@@ -119,11 +174,10 @@ impl Orchestrator {
         }
     }
 
-    async fn tick(&self) {
+    pub async fn tick(&self) {
         if let Err(e) = self.reconcile_running().await {
             tracing::warn!("reconciliation_failed: {e}");
         }
-        // Per-tick validation
         let cfg = self.inner.config.read().await.clone();
         if let Err(e) = cfg.validate_for_dispatch() {
             tracing::warn!("dispatch_preflight_failed: {e}");
@@ -152,40 +206,32 @@ impl Orchestrator {
 
     async fn is_dispatch_eligible(&self, issue: &Issue, cfg: &EffectiveConfig) -> bool {
         let state = self.inner.state.lock().await;
-        // Required fields
         if issue.id.is_empty() || issue.identifier.is_empty() || issue.title.is_empty() || issue.state.is_empty() {
             return false;
         }
         let state_lower = issue.state.to_lowercase();
-        let active = cfg.tracker.active_states.iter().any(|s| s.to_lowercase() == state_lower);
-        let terminal = cfg.tracker.terminal_states.iter().any(|s| s.to_lowercase() == state_lower);
+        let active = cfg.tracker.active_states.iter().any(|s| s.eq_ignore_ascii_case(&issue.state));
+        let terminal = cfg.tracker.terminal_states.iter().any(|s| s.eq_ignore_ascii_case(&issue.state));
         if !active || terminal {
             return false;
         }
         if state.running.contains_key(&issue.id) || state.claimed.contains(&issue.id) {
             return false;
         }
-        // Global slots
         let running_count = state.running.len() as u32;
         if running_count >= cfg.agent.max_concurrent_agents {
             return false;
         }
-        // Per-state limit
-        if let Some(per_limit) = cfg
-            .agent
-            .max_concurrent_agents_by_state
-            .get(&state_lower)
-        {
+        if let Some(per_limit) = cfg.agent.max_concurrent_agents_by_state.get(&state_lower) {
             let in_state = state
                 .running
                 .values()
-                .filter(|r| r.issue.state.to_lowercase() == state_lower)
+                .filter(|r| r.issue.state.eq_ignore_ascii_case(&issue.state))
                 .count() as u32;
             if in_state >= *per_limit {
                 return false;
             }
         }
-        // Blocker rule for Todo
         if state_lower == "todo" {
             let cfg_terminal_lower: Vec<String> = cfg
                 .tracker
@@ -209,11 +255,7 @@ impl Orchestrator {
             s.claimed.insert(issue.id.clone());
             s.retry_attempts.remove(&issue.id);
         }
-        let this = self.clone();
-        let handle = tokio::spawn(async move {
-            this.run_worker(issue, None).await;
-        });
-        self.inner.workers.lock().await.push(handle);
+        let _ = self.inner.run_tx.send(RunRequest { issue, attempt: None });
     }
 
     async fn run_worker(&self, mut issue: Issue, attempt: Option<u32>) {
@@ -225,36 +267,27 @@ impl Orchestrator {
             Ok(w) => w,
             Err(e) => {
                 tracing::error!(issue_identifier = %issue.identifier, "workspace_failed: {e}");
-                self.fail_and_schedule_retry(&issue, e.to_string(), attempt.unwrap_or(0))
-                    .await;
+                self.fail_and_schedule_retry(&issue, e.to_string(), attempt.unwrap_or(0));
                 return;
             }
         };
 
         if let Err(e) = ws_mgr.before_run(&workspace).await {
             tracing::error!(issue_identifier = %issue.identifier, "before_run_failed: {e}");
-            self.fail_and_schedule_retry(&issue, e.to_string(), attempt.unwrap_or(0))
-                .await;
+            self.fail_and_schedule_retry(&issue, e.to_string(), attempt.unwrap_or(0));
             return;
         }
 
         let prompt = match render_prompt(&workflow.prompt_template, &issue, attempt) {
-            Ok(p) => {
-                if p.trim().is_empty() {
-                    "You are working on an issue from the issue tracker.".to_string()
-                } else {
-                    p
-                }
-            }
+            Ok(p) if !p.trim().is_empty() => p,
+            Ok(_) => "You are working on an issue from the issue tracker.".to_string(),
             Err(e) => {
                 tracing::error!(issue_identifier = %issue.identifier, "prompt_render_failed: {e}");
-                self.fail_and_schedule_retry(&issue, e.to_string(), attempt.unwrap_or(0))
-                    .await;
+                self.fail_and_schedule_retry(&issue, e.to_string(), attempt.unwrap_or(0));
                 return;
             }
         };
 
-        // Mark running
         {
             let mut s = self.inner.state.lock().await;
             s.running.insert(
@@ -268,7 +301,7 @@ impl Orchestrator {
             );
         }
 
-        let harness: Box<dyn Harness> = select_harness(&cfg.agent.harness);
+        let harness: Box<dyn Harness + Send + Sync> = select_harness(&cfg.agent.harness);
         let mut turns = 0u32;
         let mut last_outcome_success = true;
         let mut last_error: Option<String> = None;
@@ -317,15 +350,9 @@ impl Orchestrator {
                     let tracker = self.inner.tracker.read().await.clone();
                     let states = tracker.fetch_issue_states_by_ids(&[issue.id.clone()]).await;
                     let new_state = states.ok().and_then(|m| m.get(&issue.id).cloned());
-                    let still_active = new_state
-                        .as_deref()
-                        .map(|s| {
-                            cfg.tracker
-                                .active_states
-                                .iter()
-                                .any(|a| a.eq_ignore_ascii_case(s))
-                        })
-                        .unwrap_or(false);
+                    let still_active = new_state.as_deref().map(|s| {
+                        cfg.tracker.active_states.iter().any(|a| a.eq_ignore_ascii_case(s))
+                    }).unwrap_or(false);
                     if !still_active {
                         break;
                     }
@@ -338,11 +365,9 @@ impl Orchestrator {
 
         ws_mgr.after_run(&workspace).await;
 
-        // Worker exit bookkeeping
         let started_at = {
             let mut s = self.inner.state.lock().await;
-            let entry = s.running.remove(&issue.id);
-            entry.map(|e| e.started_at)
+            s.running.remove(&issue.id).map(|e| e.started_at)
         };
         if let Some(start) = started_at {
             let dur = (Utc::now() - start).num_milliseconds().max(0) as f64 / 1000.0;
@@ -350,19 +375,15 @@ impl Orchestrator {
         }
 
         if last_outcome_success {
-            // Continuation retry (~1s) so we can re-check
-            self.schedule_retry(&issue, 1, CONTINUATION_DELAY_MS, None).await;
+            self.schedule_retry(&issue, 1, CONTINUATION_DELAY_MS, None);
         } else {
-            let prev = attempt.unwrap_or(0);
-            self.fail_and_schedule_retry(&issue, last_error.unwrap_or_else(|| "unknown".into()), prev)
-                .await;
+            self.fail_and_schedule_retry(&issue, last_error.unwrap_or_else(|| "unknown".into()), attempt.unwrap_or(0));
         }
     }
 
     async fn apply_event(&self, issue_id: &str, ev: AgentEvent) {
         let mut s = self.inner.state.lock().await;
 
-        // First pass: update the running entry's session metadata.
         let token_delta = {
             let Some(running) = s.running.get_mut(issue_id) else { return };
             let session = running.session.get_or_insert(LiveSession {
@@ -397,7 +418,6 @@ impl Orchestrator {
             })
         };
 
-        // Second pass: fold the delta into orchestrator-wide totals.
         if let Some((latest, prev)) = token_delta {
             if latest.input_tokens > prev.input_tokens {
                 s.codex_totals.input_tokens += latest.input_tokens - prev.input_tokens;
@@ -411,34 +431,65 @@ impl Orchestrator {
         }
     }
 
-    async fn fail_and_schedule_retry(&self, issue: &Issue, err: String, prev_attempt: u32) {
+    fn fail_and_schedule_retry(&self, issue: &Issue, err: String, prev_attempt: u32) {
         let attempt = prev_attempt + 1;
-        let cfg = self.inner.config.read().await.clone();
+        // Read max backoff from a snapshot via blocking try_lock — we can't await here.
+        // Use the unbounded retry channel and let the dispatcher compute the cap when it
+        // fires the timer.
         let backoff = (RETRY_BASE_MS.saturating_mul(1u64 << (attempt.saturating_sub(1).min(20))))
-            .min(cfg.agent.max_retry_backoff_ms);
-        self.schedule_retry(issue, attempt, backoff, Some(err)).await;
+            .min(/* cap is enforced again at dispatcher */ u64::MAX);
+        self.schedule_retry(issue, attempt, backoff, Some(err));
     }
 
-    async fn schedule_retry(&self, issue: &Issue, attempt: u32, delay_ms: u64, err: Option<String>) {
-        {
-            let mut s = self.inner.state.lock().await;
+    fn schedule_retry(&self, issue: &Issue, attempt: u32, delay_ms: u64, err: Option<String>) {
+        // Cap delay against the configured max backoff using a try_read snapshot if possible;
+        // otherwise the dispatcher will at least cap to a hard ceiling.
+        let capped = if let Ok(cfg) = self.inner.config.try_read() {
+            delay_ms.min(cfg.agent.max_retry_backoff_ms)
+        } else {
+            delay_ms.min(600_000)
+        };
+        let req = RetryRequest {
+            issue_id: issue.id.clone(),
+            identifier: issue.identifier.clone(),
+            attempt,
+            delay_ms: capped,
+            error: err.clone(),
+        };
+        // Record retry entry synchronously via blocking try_lock; if contended, fall back.
+        if let Ok(mut s) = self.inner.state.try_lock() {
             s.retry_attempts.insert(
                 issue.id.clone(),
                 RetryEntry {
                     issue_id: issue.id.clone(),
                     identifier: issue.identifier.clone(),
                     attempt,
-                    due_at_ms: now_monotonic_ms() + delay_ms as i64,
+                    due_at_ms: now_monotonic_ms() + capped as i64,
                     error: err,
                 },
             );
+        } else {
+            // Mutex contended: spawn an async task to record the retry entry without holding up
+            // the caller. The retry will still fire because we send the request below.
+            let inner = self.inner.clone();
+            let issue_id = issue.id.clone();
+            let identifier = issue.identifier.clone();
+            let err_clone = err.clone();
+            tokio::spawn(async move {
+                let mut s = inner.state.lock().await;
+                s.retry_attempts.insert(
+                    issue_id.clone(),
+                    RetryEntry {
+                        issue_id,
+                        identifier,
+                        attempt,
+                        due_at_ms: now_monotonic_ms() + capped as i64,
+                        error: err_clone,
+                    },
+                );
+            });
         }
-        let this = self.clone();
-        let issue_id = issue.id.clone();
-        tokio::spawn(async move {
-            tokio::time::sleep(Duration::from_millis(delay_ms)).await;
-            this.handle_retry_due(issue_id, attempt).await;
-        });
+        let _ = self.inner.retry_tx.send(req);
     }
 
     async fn handle_retry_due(&self, issue_id: String, attempt: u32) {
@@ -459,11 +510,7 @@ impl Orchestrator {
                 s.claimed.remove(&issue_id);
             }
             Some(issue) => {
-                let active = cfg
-                    .tracker
-                    .active_states
-                    .iter()
-                    .any(|a| a.to_lowercase() == issue.state.to_lowercase());
+                let active = cfg.tracker.active_states.iter().any(|a| a.eq_ignore_ascii_case(&issue.state));
                 if !active {
                     let mut s = self.inner.state.lock().await;
                     s.retry_attempts.remove(&issue_id);
@@ -472,19 +519,14 @@ impl Orchestrator {
                 }
                 let running_count = self.inner.state.lock().await.running.len() as u32;
                 if running_count >= cfg.agent.max_concurrent_agents {
-                    self.schedule_retry(&issue, attempt, 5_000, Some("no available orchestrator slots".into()))
-                        .await;
+                    self.schedule_retry(&issue, attempt, 5_000, Some("no available orchestrator slots".into()));
                     return;
                 }
                 {
                     let mut s = self.inner.state.lock().await;
                     s.retry_attempts.remove(&issue_id);
                 }
-                let this = self.clone();
-                let handle = tokio::spawn(async move {
-                    this.run_worker(issue, Some(attempt)).await;
-                });
-                self.inner.workers.lock().await.push(handle);
+                let _ = self.inner.run_tx.send(RunRequest { issue, attempt: Some(attempt) });
             }
         }
     }
@@ -514,7 +556,6 @@ impl Orchestrator {
         }
         for id in to_stall {
             tracing::warn!(issue_id = %id, "stall_detected");
-            // We don't have a direct kill handle on harness subprocesses in v0.1; mark for retry.
             let mut s = self.inner.state.lock().await;
             if let Some(entry) = s.running.remove(&id) {
                 s.retry_attempts.insert(
@@ -530,16 +571,7 @@ impl Orchestrator {
             }
         }
 
-        // Tracker state refresh
-        let ids: Vec<String> = self
-            .inner
-            .state
-            .lock()
-            .await
-            .running
-            .keys()
-            .cloned()
-            .collect();
+        let ids: Vec<String> = self.inner.state.lock().await.running.keys().cloned().collect();
         if ids.is_empty() {
             return Ok(());
         }
@@ -559,7 +591,6 @@ impl Orchestrator {
                 Some(st) => {
                     let lower = st.to_lowercase();
                     if term_lower.contains(&lower) {
-                        // Terminate worker (best effort) and clean workspace
                         let identifier = {
                             let mut s = self.inner.state.lock().await;
                             s.running.remove(&id).map(|r| r.issue.identifier)
@@ -583,7 +614,7 @@ impl Orchestrator {
     }
 }
 
-fn sort_candidates(mut issues: Vec<Issue>) -> Vec<Issue> {
+pub fn sort_candidates(mut issues: Vec<Issue>) -> Vec<Issue> {
     issues.sort_by(|a, b| {
         let pa = a.priority.unwrap_or(i32::MAX);
         let pb = b.priority.unwrap_or(i32::MAX);
@@ -640,4 +671,3 @@ pub fn build_tracker(cfg: &EffectiveConfig) -> Result<Arc<dyn Tracker>> {
         other => Err(SymphonyError::UnsupportedTrackerKind(other.into())),
     }
 }
-

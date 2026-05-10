@@ -15,7 +15,7 @@ pub async fn serve(orch: Orchestrator, port: u16) -> anyhow::Result<()> {
         .route("/", get(dashboard))
         .route("/api/v1/state", get(api_state))
         .route("/api/v1/refresh", post(api_refresh))
-        .route("/api/v1/:identifier", get(api_issue))
+        .route("/api/v1/{identifier}", get(api_issue))
         .with_state(orch);
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     tracing::info!(%addr, "symphony_http_listening");

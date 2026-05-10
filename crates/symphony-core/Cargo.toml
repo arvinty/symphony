@@ -4,6 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[dev-dependencies]
+tokio = { workspace = true, features = ["full", "test-util"] }
+
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true

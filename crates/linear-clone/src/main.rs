@@ -1,18 +1,7 @@
-mod db;
-mod schema;
-mod rest;
-
 use anyhow::Result;
-use async_graphql::http::{playground_source, GraphQLPlaygroundConfig};
-use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
-use axum::{
-    extract::State,
-    response::{Html, IntoResponse},
-    routing::{get, post},
-    Router,
-};
+use axum::{response::Html, Router};
 use clap::Parser;
-use schema::{build_schema, AppSchema};
+use linear_clone::{build_router, db, schema::build_schema, AppState};
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use tower_http::cors::{Any, CorsLayer};
@@ -26,15 +15,8 @@ struct Cli {
     db: PathBuf,
     #[arg(long, default_value_t = 4000)]
     port: u16,
-    /// Path to web/dist for serving the UI
     #[arg(long, env = "LINEAR_CLONE_WEB", default_value = "web/dist")]
     web_dir: PathBuf,
-}
-
-#[derive(Clone)]
-pub struct AppState {
-    pub pool: sqlx::SqlitePool,
-    pub schema: AppSchema,
 }
 
 #[tokio::main]
@@ -50,14 +32,7 @@ async fn main() -> Result<()> {
     let state = AppState { pool, schema };
 
     let cors = CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any);
-
-    let api = Router::new()
-        .route("/graphql", post(graphql_handler))
-        .route("/graphql", get(graphql_playground))
-        .route("/api/health", get(|| async { "ok" }))
-        .nest("/api", rest::router())
-        .with_state(state);
-
+    let api = build_router(state);
     let app: Router = if cli.web_dir.exists() {
         let serve = ServeDir::new(&cli.web_dir).append_index_html_on_directories(true);
         api.fallback_service(serve).layer(cors)
@@ -70,14 +45,6 @@ async fn main() -> Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app.into_make_service()).await?;
     Ok(())
-}
-
-async fn graphql_handler(State(state): State<AppState>, req: GraphQLRequest) -> GraphQLResponse {
-    state.schema.execute(req.into_inner()).await.into()
-}
-
-async fn graphql_playground() -> impl IntoResponse {
-    Html(playground_source(GraphQLPlaygroundConfig::new("/graphql")))
 }
 
 const LANDING: &str = r#"<!doctype html><meta charset=utf-8><title>Linear Clone</title>

@@ -1,7 +1,6 @@
 use crate::error::{Result, SymphonyError};
 use crate::workflow::WorkflowDefinition;
 use serde::{Deserialize, Serialize};
-use serde_yaml::Value;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 

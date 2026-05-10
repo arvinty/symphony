@@ -4,9 +4,16 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 
+[lib]
+name = "linear_clone"
+path = "src/lib.rs"
+
 [[bin]]
 name = "linear-clone"
 path = "src/main.rs"
+
+[dev-dependencies]
+tower = { version = "0.5", features = ["util"] }
 
 [dependencies]
 anyhow.workspace = true

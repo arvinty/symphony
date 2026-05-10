@@ -56,8 +56,6 @@ impl Harness for ClaudeCodeHarness {
 
         let tx_stdout = tx.clone();
         let pid_clone = pid.clone();
-        let mut thread_id = String::new();
-        let mut last_turn_id = String::new();
         let mut had_error = false;
 
         let stdout_handle = tokio::spawn(async move {
@@ -111,22 +109,19 @@ impl Harness for ClaudeCodeHarness {
             .wait()
             .await
             .map_err(SymphonyError::Io)?;
-        let (tid, tu) = stdout_handle.await.unwrap_or_default();
+        let (thread_id, last_turn_id) = stdout_handle.await.unwrap_or_default();
         let _ = stderr_handle.await;
-        thread_id = tid;
-        last_turn_id = tu;
 
         if !status.success() {
             had_error = true;
         }
 
-        let outcome = HarnessOutcome {
+        Ok(HarnessOutcome {
             thread_id: if thread_id.is_empty() { format!("claude-{}", uuid::Uuid::new_v4()) } else { thread_id },
             turn_id: if last_turn_id.is_empty() { format!("turn-{}", uuid::Uuid::new_v4()) } else { last_turn_id },
             success: !had_error,
             error: if had_error { Some(format!("exit_status={:?}", status.code())) } else { None },
-        };
-        Ok(outcome)
+        })
     }
 }
 

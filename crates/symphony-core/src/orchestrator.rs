@@ -102,13 +102,6 @@ impl Orchestrator {
     }
 
     pub async fn retry_open_pr(&self, identifier: &str) -> anyhow::Result<String> {
-        let snap = self.snapshot().await;
-        let run = snap
-            .running
-            .values()
-            .find(|r| r.issue.identifier == identifier)
-            .ok_or_else(|| anyhow::anyhow!("issue not currently running"))?
-            .clone();
         let cfg = self.inner.config.read().await.clone();
         let remote = cfg
             .vcs
@@ -118,11 +111,36 @@ impl Orchestrator {
             .to_string();
         let prefix = cfg.vcs.branch_prefix.as_deref().unwrap_or("symphony/").to_string();
         let branch = format!("{prefix}{identifier}");
-        let workspace_path = std::path::PathBuf::from(&run.workspace_path);
+        let workspace = self.inner.workspace.read().await.clone();
+        let workspace_path = workspace.workspace_path_for(identifier);
+        if !workspace_path.exists() {
+            return Err(anyhow::anyhow!("workspace not found for issue {identifier}"));
+        }
+        let tracker = self.inner.tracker.read().await.clone();
+        let title_issue = tracker
+            .fetch_candidate_issues()
+            .await
+            .ok()
+            .and_then(|issues| issues.into_iter().find(|i| i.identifier == identifier));
         crate::vcs::push_branch(&workspace_path, &remote, &branch).await?;
-        let title = format!("{}: {}", identifier, run.issue.title);
+        let issue_id = title_issue
+            .as_ref()
+            .map(|issue| issue.id.clone())
+            .unwrap_or_else(|| identifier.to_string());
+        let _ = self.event_bus().send(crate::events::broadcast::OrchestratorEvent::VcsPushed {
+            issue_id: issue_id.clone(),
+            branch: branch.clone(),
+        });
+        let title = title_issue
+            .as_ref()
+            .map(|issue| format!("{}: {}", identifier, issue.title))
+            .unwrap_or_else(|| format!("{}: Symphony changes", identifier));
         let body = format!("Authored by Symphony for {}.", identifier);
-        let url = crate::vcs::open_pr(&workspace_path, &title, &body).await?;
+        let url = crate::vcs::open_pr(&workspace_path, &title, &body, &branch).await?;
+        let _ = self.event_bus().send(crate::events::broadcast::OrchestratorEvent::PrOpened {
+            issue_id,
+            url: url.clone(),
+        });
         Ok(url)
     }
 
@@ -453,14 +471,15 @@ impl Orchestrator {
                             if cfg.vcs.auto_open_pr {
                                 let title = format!("{}: {}", issue.identifier, issue.title);
                                 let body = format!("Authored by Symphony for {}.", issue.identifier);
-                                match crate::vcs::open_pr(&workspace.path, &title, &body).await {
+                                match crate::vcs::open_pr(&workspace.path, &title, &body, &branch).await {
                                     Ok(url) => {
                                         let _ = bus.send(crate::events::broadcast::OrchestratorEvent::PrOpened {
                                             issue_id: issue.id.clone(),
                                             url: url.clone(),
                                         });
                                         follow_up = Some(format!(
-                                            "PR opened at {url}. Call `linear_graphql.link_pull_request` with that URL and a short title to attach it to issue {}, then end the turn.",
+                                            "PR opened at {url}. Call `linear_graphql.link_pull_request` with issue_id `{}`, that URL, and a short title to attach it to {}. Then end the turn.",
+                                            issue.id,
                                             issue.identifier
                                         ));
                                     }

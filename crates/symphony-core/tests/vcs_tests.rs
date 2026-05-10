@@ -33,9 +33,9 @@ async fn open_pr_uses_gh_shim_and_returns_url() {
     let shim_dir = TempDir::new().unwrap();
     let shim = shim_dir.path().join(if cfg!(windows) { "gh.cmd" } else { "gh" });
     let body = if cfg!(windows) {
-        "@echo {\"url\":\"https://github.com/o/r/pull/42\"}\r\n"
+        "@echo %* | find \"--head symphony/DEMO-1\" >nul || exit /b 2\r\n@echo {\"url\":\"https://github.com/o/r/pull/42\"}\r\n"
     } else {
-        "#!/usr/bin/env bash\necho '{\"url\":\"https://github.com/o/r/pull/42\"}'\n"
+        "#!/usr/bin/env bash\ncase \" $* \" in *\" --head symphony/DEMO-1 \"*) ;; *) exit 2;; esac\necho '{\"url\":\"https://github.com/o/r/pull/42\"}'\n"
     };
     std::fs::write(&shim, body).unwrap();
     #[cfg(unix)]
@@ -53,6 +53,6 @@ async fn open_pr_uses_gh_shim_and_returns_url() {
     );
     std::env::set_var("PATH", path);
 
-    let url = open_pr(work.path(), "feat: x", "body").await.unwrap();
+    let url = open_pr(work.path(), "feat: x", "body", "symphony/DEMO-1").await.unwrap();
     assert_eq!(url, "https://github.com/o/r/pull/42");
 }

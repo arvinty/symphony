@@ -15,7 +15,7 @@ pub async fn push_branch(workspace: &Path, remote: &str, branch: &str) -> Result
     Ok(())
 }
 
-pub async fn open_pr(workspace: &Path, title: &str, body: &str) -> Result<String> {
+pub async fn open_pr(workspace: &Path, title: &str, body: &str, head: &str) -> Result<String> {
     // On Windows, tokio::process::Command uses CreateProcess directly and does not
     // resolve PATHEXT (.cmd/.bat), so we invoke gh through cmd /c to allow .cmd shims.
     // We build the command string carefully to handle spaces in title/body via quoting.
@@ -31,6 +31,8 @@ pub async fn open_pr(workspace: &Path, title: &str, body: &str) -> Result<String
                 title,
                 "--body",
                 body,
+                "--head",
+                head,
                 "--json",
                 "url",
                 "-q",
@@ -44,7 +46,10 @@ pub async fn open_pr(workspace: &Path, title: &str, body: &str) -> Result<String
 
     #[cfg(not(windows))]
     let out = Command::new("gh")
-        .args(["pr", "create", "--title", title, "--body", body, "--json", "url", "-q", ".url"])
+        .args([
+            "pr", "create", "--title", title, "--body", body, "--head", head, "--json", "url",
+            "-q", ".url",
+        ])
         .current_dir(workspace)
         .output()
         .await

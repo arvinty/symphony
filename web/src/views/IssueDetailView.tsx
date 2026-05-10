@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import useSWR from "swr";
 import { useParams } from "react-router-dom";
 import { gql, ISSUE_FIELDS, listStates, updateIssueState } from "../graphql";
@@ -15,11 +16,14 @@ export function IssueDetailView() {
   });
   const { data: states = [] } = useSWR("states", listStates);
   const events = useEventStream(data?.id);
+  const lastEvent = events[events.length - 1];
+
+  useEffect(() => {
+    if (lastEvent?.kind === "pr_opened") void mutate();
+  }, [lastEvent, mutate]);
+
   if (!data)
     return <div className="px-6 py-10 text-subtle text-[13px]">Loading…</div>;
-  // Refetch on pr_opened so the attachment chip appears.
-  const lastEvent = events[events.length - 1];
-  if (lastEvent?.kind === "pr_opened") void mutate();
   return (
     <div className="grid grid-cols-[1fr_280px] gap-6 px-8 py-6 max-w-[1100px]">
       <article>

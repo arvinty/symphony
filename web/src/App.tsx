@@ -2,6 +2,7 @@ import { Outlet } from "react-router-dom";
 import { Sidebar } from "./components/Sidebar";
 import { TopBar } from "./components/TopBar";
 import { CommandBar } from "./components/CommandBar";
+import { ApprovalToast } from "./components/ApprovalToast";
 import { useEffect, useState } from "react";
 
 export function App() {
@@ -28,6 +29,7 @@ export function App() {
         </main>
       </div>
       {cmdOpen && <CommandBar onClose={() => setCmdOpen(false)} />}
+      <ApprovalToast />
     </div>
   );
 }

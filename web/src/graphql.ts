@@ -26,6 +26,7 @@ export type Issue = {
   team: { id: string; key: string; name: string; color?: string | null };
   project?: { id: string; slugId: string; name: string; color?: string | null } | null;
   labels: { nodes: { id: string; name: string; color?: string | null }[] };
+  attachments: { nodes: { id: string; url: string; title?: string | null; kind: string; createdAt: string }[] };
 };
 
 export const ISSUE_FIELDS = `
@@ -35,6 +36,7 @@ export const ISSUE_FIELDS = `
   team { id key name color }
   project { id slugId name color }
   labels { nodes { id name color } }
+  attachments { nodes { id url title kind createdAt } }
 `;
 
 export async function listIssues(filter?: any): Promise<Issue[]> {

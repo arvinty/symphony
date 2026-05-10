@@ -1,6 +1,8 @@
 import useSWR from "swr";
 import { useParams } from "react-router-dom";
 import { gql, ISSUE_FIELDS, listStates, updateIssueState } from "../graphql";
+import { AttachmentChip } from "../components/AttachmentChip";
+import { useEventStream } from "../hooks/useEventStream";
 
 export function IssueDetailView() {
   const { identifier } = useParams();
@@ -12,8 +14,12 @@ export function IssueDetailView() {
     return (data.issues.nodes as any[]).find((i) => i.identifier === identifier);
   });
   const { data: states = [] } = useSWR("states", listStates);
+  const events = useEventStream(data?.id);
   if (!data)
     return <div className="px-6 py-10 text-subtle text-[13px]">Loading…</div>;
+  // Refetch on pr_opened so the attachment chip appears.
+  const lastEvent = events[events.length - 1];
+  if (lastEvent?.kind === "pr_opened") void mutate();
   return (
     <div className="grid grid-cols-[1fr_280px] gap-6 px-8 py-6 max-w-[1100px]">
       <article>
@@ -22,6 +28,28 @@ export function IssueDetailView() {
         <p className="mt-4 text-[14px] leading-7 text-subtle whitespace-pre-wrap">
           {data.description ?? "No description."}
         </p>
+        {data.attachments?.nodes?.length > 0 && (
+          <div className="mt-4 flex flex-wrap gap-2">
+            {data.attachments.nodes.map((a: any) => (
+              <AttachmentChip key={a.id} url={a.url} title={a.title} />
+            ))}
+          </div>
+        )}
+        {events.length > 0 && (
+          <div className="mt-6 rounded border border-border bg-elevated p-3">
+            <div className="text-2xs uppercase text-muted tracking-wide mb-2">Live activity</div>
+            <ul className="space-y-1 text-[12px] font-mono text-subtle max-h-48 overflow-auto">
+              {events.slice(-20).map((e, i) => (
+                <li key={i}>
+                  <span className="text-muted">{e.kind}</span>
+                  {"tool" in e && <> · {e.tool}</>}
+                  {"branch" in e && <> · {e.branch}</>}
+                  {"url" in e && <> · {e.url}</>}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
       </article>
       <aside className="space-y-4 text-[12px]">
         <Field label="Status">

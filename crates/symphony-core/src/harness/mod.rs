@@ -8,6 +8,7 @@ use tokio::sync::mpsc;
 pub mod claude_code;
 pub mod hermes;
 pub mod codex_stub;
+pub mod approvals;
 
 /// One agent run within one workspace. Produces a stream of events and a final outcome.
 #[async_trait]

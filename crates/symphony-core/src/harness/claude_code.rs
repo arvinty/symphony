@@ -1,15 +1,12 @@
-use super::{Harness, HarnessOutcome};
-use crate::config::EffectiveConfig;
+use super::{Harness, HarnessContext, HarnessOutcome};
 use crate::error::{Result, SymphonyError};
 use crate::events::{AgentEvent, AgentEventKind};
 use crate::model::UsageTokens;
 use async_trait::async_trait;
 use chrono::Utc;
-use std::path::Path;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::mpsc;
 
 /// Spawns the Claude Code CLI in headless print mode with stream-json output, and translates
 /// each JSON line into a normalized AgentEvent. Uses the user's existing Claude Code subscription
@@ -23,13 +20,8 @@ impl Harness for ClaudeCodeHarness {
         "claude_code"
     }
 
-    async fn run(
-        &self,
-        workspace: &Path,
-        prompt: &str,
-        _cfg: &EffectiveConfig,
-        tx: mpsc::Sender<AgentEvent>,
-    ) -> Result<HarnessOutcome> {
+    async fn run(&self, ctx: HarnessContext<'_>) -> Result<HarnessOutcome> {
+        let HarnessContext { workspace, prompt, cfg: _, tx, .. } = ctx;
         let mut cmd = Command::new("claude");
         cmd.arg("-p")
             .arg(prompt)

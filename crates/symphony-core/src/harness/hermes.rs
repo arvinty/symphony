@@ -1,14 +1,11 @@
-use super::{Harness, HarnessOutcome};
-use crate::config::EffectiveConfig;
+use super::{Harness, HarnessContext, HarnessOutcome};
 use crate::error::{Result, SymphonyError};
 use crate::events::{AgentEvent, AgentEventKind};
 use async_trait::async_trait;
 use chrono::Utc;
-use std::path::Path;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
-use tokio::sync::mpsc;
 
 /// Hermes (Nous Research) agent harness. Spawns `hermes run` (or equivalent CLI form)
 /// pointed at Claude as the model provider.
@@ -25,13 +22,8 @@ impl Harness for HermesHarness {
         "hermes"
     }
 
-    async fn run(
-        &self,
-        workspace: &Path,
-        prompt: &str,
-        _cfg: &EffectiveConfig,
-        tx: mpsc::Sender<AgentEvent>,
-    ) -> Result<HarnessOutcome> {
+    async fn run(&self, ctx: HarnessContext<'_>) -> Result<HarnessOutcome> {
+        let HarnessContext { workspace, prompt, tx, .. } = ctx;
         let mut cmd = Command::new("hermes");
         cmd.arg("run")
             .arg("--provider")

@@ -2,7 +2,7 @@ use crate::config::EffectiveConfig;
 use crate::error::{Result, SymphonyError};
 use crate::events::{AgentEvent, AgentEventKind};
 use crate::harness::approvals::ApprovalRouter;
-use crate::harness::{select_harness, Harness};
+use crate::harness::{select_harness, Harness, HarnessContext};
 use crate::model::{Issue, LiveSession, RetryEntry, RunningEntry, UsageTokens};
 use crate::prompt::render_prompt;
 use crate::state::OrchestratorState;
@@ -342,7 +342,18 @@ impl Orchestrator {
 
             let outcome = tokio::time::timeout(
                 Duration::from_millis(cfg.codex.turn_timeout_ms),
-                harness.run(&workspace.path, &turn_prompt, &cfg, tx),
+                harness.run(HarnessContext {
+                    workspace: &workspace.path,
+                    prompt: &turn_prompt,
+                    cfg: &cfg,
+                    tx,
+                    bus: self.event_bus(),
+                    approval_router: self.approval_router(),
+                    policy: cfg.policy.clone(),
+                    linear_token: None,                  // Task 13 fills this in
+                    linear_endpoint: cfg.tracker.endpoint.clone(),
+                    issue_id: issue.id.clone(),
+                }),
             )
             .await;
             let _ = event_handle.await;

@@ -1,6 +1,9 @@
 use crate::config::EffectiveConfig;
 use crate::error::Result;
 use crate::events::AgentEvent;
+use crate::events::broadcast::OrchestratorEventBus;
+use crate::harness::approvals::ApprovalRouter;
+use crate::policy::Policy;
 use async_trait::async_trait;
 use std::path::Path;
 use tokio::sync::mpsc;
@@ -10,18 +13,23 @@ pub mod hermes;
 pub mod codex_stub;
 pub mod approvals;
 
-/// One agent run within one workspace. Produces a stream of events and a final outcome.
+pub struct HarnessContext<'a> {
+    pub workspace: &'a Path,
+    pub prompt: &'a str,
+    pub cfg: &'a EffectiveConfig,
+    pub tx: mpsc::Sender<AgentEvent>,
+    pub bus: OrchestratorEventBus,
+    pub approval_router: ApprovalRouter,
+    pub policy: Policy,
+    pub linear_token: Option<String>,
+    pub linear_endpoint: Option<String>,
+    pub issue_id: String,
+}
+
 #[async_trait]
 pub trait Harness: Send + Sync {
     fn name(&self) -> &'static str;
-    /// Run a single turn (or session) and stream events.
-    async fn run(
-        &self,
-        workspace: &Path,
-        prompt: &str,
-        cfg: &EffectiveConfig,
-        tx: mpsc::Sender<AgentEvent>,
-    ) -> Result<HarnessOutcome>;
+    async fn run(&self, ctx: HarnessContext<'_>) -> Result<HarnessOutcome>;
 }
 
 #[derive(Debug, Clone)]

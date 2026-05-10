@@ -29,7 +29,7 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let pool = db::open_and_migrate(&cli.db).await?;
     let schema = build_schema(pool.clone());
-    let state = AppState { pool, schema };
+    let state = AppState { pool, schema, token_store: linear_clone::auth::TokenStore::default() };
 
     let cors = CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any);
     let api = build_router(state);

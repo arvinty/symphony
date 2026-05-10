@@ -451,6 +451,13 @@ impl MutationRoot {
         url: String,
         title: Option<String>,
     ) -> Result<Attachment> {
+        if let Some(auth) = ctx.data_opt::<crate::auth::AuthCtx>() {
+            if let Some(bound) = &auth.bound_issue {
+                if bound != issue_id.as_str() {
+                    return Err(async_graphql::Error::new("issue_token_scope mismatch"));
+                }
+            }
+        }
         let pool = ctx.data_unchecked::<SqlitePool>();
         let id = format!("att_{}", Uuid::new_v4());
         let now = Utc::now();
@@ -463,6 +470,21 @@ impl MutationRoot {
 
     async fn remove_attachment(&self, ctx: &Context<'_>, id: ID) -> Result<bool> {
         let pool = ctx.data_unchecked::<SqlitePool>();
+        if let Some(auth) = ctx.data_opt::<crate::auth::AuthCtx>() {
+            if let Some(bound) = &auth.bound_issue {
+                let att_issue: Option<String> = sqlx::query_scalar(
+                    "SELECT issue_id FROM attachments WHERE id = ?",
+                )
+                .bind(id.as_str())
+                .fetch_optional(pool)
+                .await?;
+                if let Some(att_issue) = att_issue {
+                    if &att_issue != bound {
+                        return Err(async_graphql::Error::new("issue_token_scope mismatch"));
+                    }
+                }
+            }
+        }
         let n = sqlx::query("DELETE FROM attachments WHERE id = ?")
             .bind(id.as_str()).execute(pool).await?.rows_affected();
         Ok(n > 0)

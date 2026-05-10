@@ -12,6 +12,7 @@ pub mod claude_code;
 pub mod hermes;
 pub mod codex_stub;
 pub mod approvals;
+pub mod mcp_bridge;
 
 pub struct HarnessContext<'a> {
     pub workspace: &'a Path,

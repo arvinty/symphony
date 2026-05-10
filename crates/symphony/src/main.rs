@@ -27,6 +27,21 @@ struct Cli {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Handle hidden mcp-bridge subcommand before clap parses other flags.
+    let raw: Vec<String> = std::env::args().collect();
+    if raw.get(1).map(|s| s.as_str()) == Some("mcp-bridge") {
+        // parse --issue
+        let mut issue = None;
+        let mut iter = raw.iter().skip(2);
+        while let Some(arg) = iter.next() {
+            if arg == "--issue" {
+                issue = iter.next().cloned();
+            }
+        }
+        let issue = issue.expect("--issue required");
+        return symphony_core::harness::mcp_bridge::run_mcp_server(issue).await;
+    }
+
     let cli = Cli::parse();
     init_tracing(&cli.log_format);
 

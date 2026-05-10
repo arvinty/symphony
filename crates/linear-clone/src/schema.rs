@@ -81,6 +81,20 @@ pub struct InverseRelationConnection {
 }
 
 #[derive(SimpleObject, Clone)]
+pub struct Attachment {
+    pub id: ID,
+    pub kind: String,
+    pub url: String,
+    pub title: Option<String>,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(SimpleObject, Clone)]
+pub struct AttachmentConnection {
+    pub nodes: Vec<Attachment>,
+}
+
+#[derive(SimpleObject, Clone)]
 pub struct Issue {
     pub id: ID,
     pub identifier: String,
@@ -98,6 +112,7 @@ pub struct Issue {
     pub team: Team,
     pub labels: LabelConnection,
     pub inverse_relations: InverseRelationConnection,
+    pub attachments: AttachmentConnection,
 }
 
 #[derive(SimpleObject, Clone)]
@@ -194,6 +209,65 @@ impl QueryRoot {
             .collect())
     }
 
+    async fn issue(&self, ctx: &Context<'_>, id: ID) -> Result<Option<Issue>> {
+        let pool = ctx.data::<SqlitePool>()?;
+        let id_str = id.as_str();
+        let row = sqlx::query(
+            "SELECT i.id, i.identifier, i.number, i.title, i.description, i.priority, i.url,
+                    i.branch_name, i.created_at, i.updated_at, i.assignee_id, i.project_id, i.team_id,
+                    ws.id AS state_id, ws.name AS state_name, ws.type AS state_type, ws.position AS state_pos, ws.color AS state_color
+             FROM issues i
+             JOIN workflow_states ws ON ws.id = i.state_id
+             WHERE i.id = ?",
+        )
+        .bind(id_str)
+        .fetch_optional(pool)
+        .await?;
+        match row {
+            None => Ok(None),
+            Some(r) => {
+                let iid: String = r.get("id");
+                let labels = load_labels(pool, &iid).await.unwrap_or_default();
+                let inverse = load_inverse(pool, &iid).await.unwrap_or_default();
+                let attachments = load_attachments(pool, &iid).await.unwrap_or_default();
+                let assignee = match r.try_get::<String, _>("assignee_id").ok() {
+                    Some(uid) => load_user(pool, &uid).await.ok(),
+                    None => None,
+                };
+                let project = match r.try_get::<String, _>("project_id").ok() {
+                    Some(pid) => load_project(pool, &pid).await.ok(),
+                    None => None,
+                };
+                let team = load_team(pool, &r.get::<String, _>("team_id")).await?;
+                Ok(Some(Issue {
+                    id: iid.clone().into(),
+                    identifier: r.get("identifier"),
+                    number: r.get::<i64, _>("number") as i32,
+                    title: r.get("title"),
+                    description: r.try_get("description").ok(),
+                    priority: r.try_get::<i64, _>("priority").ok().map(|v| v as i32),
+                    url: r.try_get("url").ok(),
+                    branch_name: r.try_get("branch_name").ok(),
+                    created_at: parse_dt(r.get::<String, _>("created_at")),
+                    updated_at: parse_dt(r.get::<String, _>("updated_at")),
+                    state: WorkflowState {
+                        id: r.get::<String, _>("state_id").into(),
+                        name: r.get("state_name"),
+                        state_type: r.get("state_type"),
+                        position: r.get::<f64, _>("state_pos"),
+                        color: r.try_get("state_color").ok(),
+                    },
+                    assignee,
+                    project,
+                    team,
+                    labels: LabelConnection { nodes: labels },
+                    inverse_relations: InverseRelationConnection { nodes: inverse },
+                    attachments: AttachmentConnection { nodes: attachments },
+                }))
+            }
+        }
+    }
+
     async fn issues(
         &self,
         ctx: &Context<'_>,
@@ -278,6 +352,7 @@ impl QueryRoot {
             let id_str: String = r.get("id");
             let labels = load_labels(pool, &id_str).await.unwrap_or_default();
             let inverse = load_inverse(pool, &id_str).await.unwrap_or_default();
+            let attachments = load_attachments(pool, &id_str).await.unwrap_or_default();
             let assignee = match r.try_get::<String, _>("assignee_id").ok() {
                 Some(uid) => load_user(pool, &uid).await.ok(),
                 None => None,
@@ -310,6 +385,7 @@ impl QueryRoot {
                 team,
                 labels: LabelConnection { nodes: labels },
                 inverse_relations: InverseRelationConnection { nodes: inverse },
+                attachments: AttachmentConnection { nodes: attachments },
             });
         }
         let end_cursor = if has_next { Some((offset + limit).to_string()) } else { None };
@@ -367,6 +443,30 @@ impl MutationRoot {
             .await?;
         Ok(true)
     }
+
+    async fn add_attachment(
+        &self,
+        ctx: &Context<'_>,
+        issue_id: ID,
+        url: String,
+        title: Option<String>,
+    ) -> Result<Attachment> {
+        let pool = ctx.data_unchecked::<SqlitePool>();
+        let id = format!("att_{}", Uuid::new_v4());
+        let now = Utc::now();
+        sqlx::query("INSERT INTO attachments(id, issue_id, kind, url, title, created_at) VALUES (?,?,?,?,?,?)")
+            .bind(&id).bind(issue_id.as_str()).bind("pull_request")
+            .bind(&url).bind(&title).bind(now.to_rfc3339())
+            .execute(pool).await?;
+        Ok(Attachment { id: id.into(), kind: "pull_request".into(), url, title, created_at: now })
+    }
+
+    async fn remove_attachment(&self, ctx: &Context<'_>, id: ID) -> Result<bool> {
+        let pool = ctx.data_unchecked::<SqlitePool>();
+        let n = sqlx::query("DELETE FROM attachments WHERE id = ?")
+            .bind(id.as_str()).execute(pool).await?.rows_affected();
+        Ok(n > 0)
+    }
 }
 
 #[derive(InputObject)]
@@ -378,6 +478,30 @@ pub struct CreateIssueInput {
     pub project_id: Option<ID>,
     pub state_id: Option<ID>,
     pub assignee_id: Option<ID>,
+}
+
+async fn load_attachments(pool: &SqlitePool, issue_id: &str) -> Result<Vec<Attachment>> {
+    let rows = sqlx::query(
+        "SELECT id, kind, url, title, created_at FROM attachments WHERE issue_id = ? ORDER BY created_at ASC",
+    )
+    .bind(issue_id)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows
+        .into_iter()
+        .map(|r| Attachment {
+            id: r.get::<String, _>("id").into(),
+            kind: r.get("kind"),
+            url: r.get("url"),
+            title: r.try_get("title").ok(),
+            created_at: {
+                let s: String = r.get("created_at");
+                chrono::DateTime::parse_from_rfc3339(&s)
+                    .map(|d| d.with_timezone(&Utc))
+                    .unwrap_or_else(|_| Utc::now())
+            },
+        })
+        .collect())
 }
 
 async fn load_labels(pool: &SqlitePool, issue_id: &str) -> Result<Vec<Label>> {

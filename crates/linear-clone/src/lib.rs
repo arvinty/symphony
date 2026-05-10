@@ -57,6 +57,10 @@ pub async fn init_pool_for_test() -> SqlitePool {
         .execute(&pool)
         .await
         .expect("seed");
+    sqlx::query(include_str!("../migrations/0003_attachments.sql"))
+        .execute(&pool)
+        .await
+        .expect("migrate attachments");
     pool
 }
 

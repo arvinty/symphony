@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(gh auth *)",
+      "Bash(git -C c:/Users/arvin/Downloads/symphony remote -v)",
+      "Bash(git -C c:/Users/arvin/Downloads/symphony rev-parse --show-toplevel)",
+      "Bash(ls -la c:/Users/arvin/Downloads/symphony/ 2>&1; echo \"---\"; ls c:/Users/arvin/Downloads/ 2>&1 | head -20)",
+      "Read(//c/Users/arvin/Downloads/**)",
+      "Bash(git init *)",
+      "Bash(git add *)",
+      "Bash(git -c user.email=arvintay@gmail.com -c user.name=arvinty commit -m \"Initial commit\" --allow-empty)"
+    ]
+  }
+}

@@ -30,3 +30,10 @@ async fn http_resolves_approval_via_router() {
     assert!(d.allow);
     assert_eq!(d.reason.as_deref(), Some("operator"));
 }
+
+#[tokio::test]
+async fn approval_router_resolve_unknown_returns_false() {
+    use symphony_core::harness::approvals::ApprovalRouter;
+    let router = ApprovalRouter::new();
+    assert!(!router.resolve("nope", true, None));
+}

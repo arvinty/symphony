@@ -1,6 +1,7 @@
 use crate::config::EffectiveConfig;
 use crate::error::{Result, SymphonyError};
 use crate::events::{AgentEvent, AgentEventKind};
+use crate::harness::approvals::ApprovalRouter;
 use crate::harness::{select_harness, Harness};
 use crate::model::{Issue, LiveSession, RetryEntry, RunningEntry, UsageTokens};
 use crate::prompt::render_prompt;
@@ -52,6 +53,7 @@ struct OrchestratorInner {
     retry_tx: mpsc::UnboundedSender<RetryRequest>,
     retry_rx: Mutex<Option<mpsc::UnboundedReceiver<RetryRequest>>>,
     event_bus: crate::events::broadcast::OrchestratorEventBus,
+    approval_router: ApprovalRouter,
 }
 
 impl Orchestrator {
@@ -82,12 +84,21 @@ impl Orchestrator {
                 retry_tx,
                 retry_rx: Mutex::new(Some(retry_rx)),
                 event_bus: crate::events::broadcast::OrchestratorEventBus::new(256),
+                approval_router: ApprovalRouter::new(),
             }),
         }
     }
 
     pub fn event_bus(&self) -> crate::events::broadcast::OrchestratorEventBus {
         self.inner.event_bus.clone()
+    }
+
+    pub fn approval_router(&self) -> ApprovalRouter {
+        self.inner.approval_router.clone()
+    }
+
+    pub async fn retry_open_pr(&self, _identifier: &str) -> anyhow::Result<String> {
+        Err(anyhow::anyhow!("not_implemented"))
     }
 
     pub async fn snapshot(&self) -> OrchestratorState {

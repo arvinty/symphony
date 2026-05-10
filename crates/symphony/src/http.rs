@@ -21,6 +21,8 @@ pub async fn serve(orch: Orchestrator, port: u16) -> anyhow::Result<()> {
         .route("/api/v1/state", get(api_state))
         .route("/api/v1/refresh", post(api_refresh))
         .route("/api/v1/events", get(api_events))
+        .route("/api/v1/approvals/{approval_id}", post(api_approve))
+        .route("/api/v1/{identifier}/open-pr", post(api_retry_pr))
         .route("/api/v1/{identifier}", get(api_issue))
         .with_state(orch);
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -159,6 +161,31 @@ async fn api_issue(
 async fn api_refresh(State(_orch): State<Orchestrator>) -> impl IntoResponse {
     // The poll loop already coalesces ticks; a real impl would poke a notify.
     (StatusCode::ACCEPTED, Json(json!({ "queued": true })))
+}
+
+async fn api_approve(
+    State(orch): State<Orchestrator>,
+    Path(approval_id): Path<String>,
+    Json(body): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let allow = body.get("allow").and_then(|v| v.as_bool()).unwrap_or(false);
+    let reason = body.get("reason").and_then(|v| v.as_str()).map(str::to_string);
+    let resolved = orch.approval_router().resolve(&approval_id, allow, reason);
+    if resolved {
+        (StatusCode::OK, Json(json!({"resolved": true}))).into_response()
+    } else {
+        (StatusCode::NOT_FOUND, Json(json!({"resolved": false, "reason": "unknown_or_already_resolved"}))).into_response()
+    }
+}
+
+async fn api_retry_pr(
+    State(orch): State<Orchestrator>,
+    Path(identifier): Path<String>,
+) -> impl IntoResponse {
+    match orch.retry_open_pr(&identifier).await {
+        Ok(url) => (StatusCode::OK, Json(json!({"url": url}))).into_response(),
+        Err(e) => (StatusCode::CONFLICT, Json(json!({"error": e.to_string()}))).into_response(),
+    }
 }
 
 async fn api_events(

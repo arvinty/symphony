@@ -45,3 +45,13 @@ fn sort_blockers_field_does_not_affect_sort() {
     let sorted = sort_candidates(vec![a, b]);
     assert_eq!(sorted[0].id, "b"); // older first
 }
+
+#[tokio::test]
+async fn orchestrator_event_bus_round_trips() {
+    use symphony_core::events::broadcast::{OrchestratorEvent, OrchestratorEventBus};
+    let bus = OrchestratorEventBus::new(8);
+    let mut sub = bus.subscribe();
+    bus.send(OrchestratorEvent::Resync).unwrap();
+    let got = sub.recv().await.unwrap();
+    assert!(matches!(got, OrchestratorEvent::Resync));
+}

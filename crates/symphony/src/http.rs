@@ -2,19 +2,25 @@ use axum::{
     extract::{Path, State},
     http::StatusCode,
     response::{Html, IntoResponse, Json},
+    response::sse::{Event, KeepAlive, Sse},
     routing::{get, post},
     Router,
 };
 use chrono::Utc;
+use futures::stream::{Stream, StreamExt};
 use serde_json::{json, Value};
+use std::convert::Infallible;
 use std::net::SocketAddr;
+use symphony_core::events::broadcast::OrchestratorEvent;
 use symphony_core::orchestrator::Orchestrator;
+use tokio_stream::wrappers::BroadcastStream;
 
 pub async fn serve(orch: Orchestrator, port: u16) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/", get(dashboard))
         .route("/api/v1/state", get(api_state))
         .route("/api/v1/refresh", post(api_refresh))
+        .route("/api/v1/events", get(api_events))
         .route("/api/v1/{identifier}", get(api_issue))
         .with_state(orch);
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
@@ -153,4 +159,42 @@ async fn api_issue(
 async fn api_refresh(State(_orch): State<Orchestrator>) -> impl IntoResponse {
     // The poll loop already coalesces ticks; a real impl would poke a notify.
     (StatusCode::ACCEPTED, Json(json!({ "queued": true })))
+}
+
+async fn api_events(
+    State(orch): State<Orchestrator>,
+    axum::extract::Query(q): axum::extract::Query<std::collections::HashMap<String, String>>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let issue_filter = q.get("issue").cloned();
+    let bus = orch.event_bus();
+    let rx = bus.subscribe();
+    let stream = BroadcastStream::new(rx).filter_map(move |item| {
+        let f = issue_filter.clone();
+        async move {
+            match item {
+                Ok(evt) => {
+                    if let Some(want) = f.as_ref() {
+                        let issue = match &evt {
+                            OrchestratorEvent::AgentEvent { issue_id, .. }
+                            | OrchestratorEvent::ToolCall { issue_id, .. }
+                            | OrchestratorEvent::ToolResult { issue_id, .. }
+                            | OrchestratorEvent::ApprovalRequest { issue_id, .. }
+                            | OrchestratorEvent::ApprovalDecision { issue_id, .. }
+                            | OrchestratorEvent::VcsPushed { issue_id, .. }
+                            | OrchestratorEvent::PrOpened { issue_id, .. }
+                            | OrchestratorEvent::VcsError { issue_id, .. } => Some(issue_id.clone()),
+                            OrchestratorEvent::Resync => None,
+                        };
+                        if !matches!(evt, OrchestratorEvent::Resync) && issue.as_deref() != Some(want.as_str()) {
+                            return None;
+                        }
+                    }
+                    let data = serde_json::to_string(&evt).unwrap();
+                    Some(Ok(Event::default().data(data)))
+                }
+                Err(_) => Some(Ok(Event::default().event("resync").data("{}"))),
+            }
+        }
+    });
+    Sse::new(stream).keep_alive(KeepAlive::default())
 }

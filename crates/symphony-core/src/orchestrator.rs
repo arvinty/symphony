@@ -51,6 +51,7 @@ struct OrchestratorInner {
     run_rx: Mutex<Option<mpsc::UnboundedReceiver<RunRequest>>>,
     retry_tx: mpsc::UnboundedSender<RetryRequest>,
     retry_rx: Mutex<Option<mpsc::UnboundedReceiver<RetryRequest>>>,
+    event_bus: crate::events::broadcast::OrchestratorEventBus,
 }
 
 impl Orchestrator {
@@ -80,8 +81,13 @@ impl Orchestrator {
                 run_rx: Mutex::new(Some(run_rx)),
                 retry_tx,
                 retry_rx: Mutex::new(Some(retry_rx)),
+                event_bus: crate::events::broadcast::OrchestratorEventBus::new(256),
             }),
         }
+    }
+
+    pub fn event_bus(&self) -> crate::events::broadcast::OrchestratorEventBus {
+        self.inner.event_bus.clone()
     }
 
     pub async fn snapshot(&self) -> OrchestratorState {

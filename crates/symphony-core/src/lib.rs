@@ -12,3 +12,4 @@ pub mod orchestrator;
 pub mod events;
 pub mod state;
 pub mod tools;
+pub mod vcs;

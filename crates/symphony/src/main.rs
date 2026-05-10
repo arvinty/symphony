@@ -1,7 +1,7 @@
 mod http;
 mod watcher;
 
-use anyhow::Result;
+use anyhow::{bail, Result};
 use clap::Parser;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -38,7 +38,9 @@ async fn main() -> Result<()> {
                 issue = iter.next().cloned();
             }
         }
-        let issue = issue.expect("--issue required");
+        let Some(issue) = issue else {
+            bail!("usage: symphony mcp-bridge --issue <issue-id>");
+        };
         return symphony_core::harness::mcp_bridge::run_mcp_server(issue).await;
     }
 

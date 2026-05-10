@@ -219,7 +219,10 @@ async fn api_events(
                     let data = serde_json::to_string(&evt).unwrap();
                     Some(Ok(Event::default().data(data)))
                 }
-                Err(_) => Some(Ok(Event::default().event("resync").data("{}"))),
+                Err(_) => {
+                    let data = serde_json::to_string(&OrchestratorEvent::Resync).unwrap();
+                    Some(Ok(Event::default().data(data)))
+                }
             }
         }
     });

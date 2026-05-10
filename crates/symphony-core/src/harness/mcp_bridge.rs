@@ -1,5 +1,5 @@
 use crate::tools::linear_graphql::LinearGraphqlClient;
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde_json::{json, Value};
 use std::path::Path;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -20,8 +20,10 @@ pub async fn run_mcp_server(issue_id: String) -> Result<()> {
     std::panic::set_hook(Box::new(|info| {
         eprintln!("MCP_BRIDGE_PANIC: {info}");
     }));
-    let token = std::env::var("SYMPHONY_LINEAR_TOKEN").unwrap_or_default();
-    let endpoint = std::env::var("SYMPHONY_LINEAR_ENDPOINT").unwrap_or_default();
+    let token = std::env::var("SYMPHONY_LINEAR_TOKEN")
+        .context("SYMPHONY_LINEAR_TOKEN is required for mcp-bridge")?;
+    let endpoint = std::env::var("SYMPHONY_LINEAR_ENDPOINT")
+        .context("SYMPHONY_LINEAR_ENDPOINT is required for mcp-bridge")?;
     let cli = LinearGraphqlClient::new(endpoint, token);
 
     let stdin = tokio::io::stdin();
@@ -85,7 +87,7 @@ pub async fn run_mcp_server(issue_id: String) -> Result<()> {
                                 "issue_id": {"type": "string"},
                                 "body": {"type": "string"}
                             },
-                            "required": ["issue_id", "body"]
+                            "required": ["body"]
                         }
                     },
                     {
@@ -98,7 +100,7 @@ pub async fn run_mcp_server(issue_id: String) -> Result<()> {
                                 "url": {"type": "string"},
                                 "title": {"type": "string"}
                             },
-                            "required": ["issue_id", "url"]
+                            "required": ["url"]
                         }
                     }
                 ]}
@@ -142,7 +144,10 @@ async fn handle_tool_call(
             cli.list_comments(arg_id).await.map(|v| v.to_string())
         }
         "add_comment" => {
-            let issue_id = args.get("issue_id").and_then(|v| v.as_str()).unwrap_or("");
+            let issue_id = args
+                .get("issue_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or(bound_issue);
             if issue_id != bound_issue {
                 return tool_error(
                     id,
@@ -155,7 +160,10 @@ async fn handle_tool_call(
                 .map(|s| format!(r#"{{"id":"{s}"}}"#))
         }
         "link_pull_request" => {
-            let issue_id = args.get("issue_id").and_then(|v| v.as_str()).unwrap_or("");
+            let issue_id = args
+                .get("issue_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or(bound_issue);
             if issue_id != bound_issue {
                 return tool_error(
                     id,

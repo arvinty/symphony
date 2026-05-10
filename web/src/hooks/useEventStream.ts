@@ -15,6 +15,7 @@ export function useEventStream(issueId?: string): OrchestratorEvent[] {
   const [events, setEvents] = useState<OrchestratorEvent[]>([]);
 
   useEffect(() => {
+    setEvents([]);
     const url = issueId
       ? `/api/v1/events?issue=${encodeURIComponent(issueId)}`
       : "/api/v1/events";

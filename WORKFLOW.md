@@ -12,8 +12,15 @@ workspace:
   root: ./data/workspaces
 
 hooks:
+  # The per-issue workspace is created fresh on each claim. The agent's
+  # commits won't land without a git identity, so seed one alongside `git init`.
+  # If you override this hook, set user.email/user.name yourself or your
+  # agent's commits will silently fail (the agent sees no error, but the
+  # working tree never produces a commit).
   after_create: |
     git init -q
+    git config user.email "symphony@localhost"
+    git config user.name "Symphony Agent"
   timeout_ms: 30000
 
 agent:

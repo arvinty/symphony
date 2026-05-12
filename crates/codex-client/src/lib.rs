@@ -9,4 +9,5 @@ pub mod transport;
 pub mod dispatcher;
 pub mod client;
 
+pub use client::{Client, NotificationStream};
 pub use error::{ClientError, ClientResult};

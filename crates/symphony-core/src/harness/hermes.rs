@@ -38,7 +38,18 @@ impl Harness for HermesHarness {
     }
 
     async fn run(&self, ctx: HarnessContext<'_>) -> Result<HarnessOutcome> {
-        let HarnessContext { workspace, prompt, tx, .. } = ctx;
+        let issue_id_clone = ctx.issue_id.clone();
+        let HarnessContext {
+            workspace,
+            prompt,
+            tx,
+            bus,
+            policy,
+            linear_token,
+            linear_endpoint,
+            issue_id,
+            ..
+        } = ctx;
         let mut cmd = Command::new("hermes");
         cmd.arg("run")
             .arg("--provider")
@@ -49,8 +60,23 @@ impl Harness for HermesHarness {
             .arg("--workdir")
             .arg(workspace)
             .arg("--prompt")
-            .arg(prompt)
-            .current_dir(workspace)
+            .arg(prompt);
+
+        for arg in translate_hermes_policy_args(&policy) {
+            cmd.arg(arg);
+        }
+
+        if let (Some(token), Some(endpoint)) = (linear_token.as_ref(), linear_endpoint.as_ref()) {
+            let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("symphony"));
+            let mcp_json = crate::harness::mcp_bridge::generate_mcp_config_json(&exe, &issue_id);
+            let mcp_path = workspace.join(".symphony-mcp.json");
+            std::fs::write(&mcp_path, mcp_json).ok();
+            cmd.arg("--mcp-config").arg(&mcp_path);
+            cmd.env("SYMPHONY_LINEAR_TOKEN", token);
+            cmd.env("SYMPHONY_LINEAR_ENDPOINT", endpoint);
+        }
+
+        cmd.current_dir(workspace)
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .stdin(Stdio::null());
@@ -67,36 +93,56 @@ impl Harness for HermesHarness {
 
         let tx_clone = tx.clone();
         let pid_clone = pid.clone();
+        let bus_clone = bus.clone();
         let handle = tokio::spawn(async move {
             let mut reader = BufReader::new(stdout).lines();
             while let Ok(Some(line)) = reader.next_line().await {
                 if line.trim().is_empty() {
                     continue;
                 }
-                let raw = serde_json::from_str::<serde_json::Value>(&line).ok();
-                let ev = AgentEvent {
-                    kind: AgentEventKind::Notification,
-                    timestamp: Utc::now(),
-                    agent_pid: pid_clone.clone(),
-                    thread_id: raw
-                        .as_ref()
-                        .and_then(|r| r.get("session_id"))
-                        .and_then(|s| s.as_str())
-                        .map(str::to_string),
-                    turn_id: raw
-                        .as_ref()
-                        .and_then(|r| r.get("turn_id"))
-                        .and_then(|s| s.as_str())
-                        .map(str::to_string),
-                    message: raw
-                        .as_ref()
-                        .and_then(|r| r.get("message"))
-                        .and_then(|s| s.as_str())
-                        .map(str::to_string),
-                    tokens: None,
-                    raw,
-                };
-                let _ = tx_clone.send(ev).await;
+                match serde_json::from_str::<serde_json::Value>(&line) {
+                    Ok(v) => {
+                        if let Some(arr) = v
+                            .get("message")
+                            .and_then(|m| m.get("content"))
+                            .and_then(|c| c.as_array())
+                        {
+                            for block in arr {
+                                if block.get("type").and_then(|s| s.as_str()) == Some("tool_use") {
+                                    let name = block
+                                        .get("name")
+                                        .and_then(|s| s.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let input = block.get("input").cloned().unwrap_or(serde_json::json!({}));
+                                    let _ = bus_clone.send(
+                                        crate::events::broadcast::OrchestratorEvent::ToolCall {
+                                            issue_id: issue_id_clone.clone(),
+                                            tool: name,
+                                            input,
+                                        },
+                                    );
+                                }
+                            }
+                        }
+                        let ev = translate_hermes_event(&v, pid_clone.as_deref());
+                        let _ = tx_clone.send(ev).await;
+                    }
+                    Err(_) => {
+                        let _ = tx_clone
+                            .send(AgentEvent {
+                                kind: AgentEventKind::Malformed,
+                                timestamp: Utc::now(),
+                                agent_pid: pid_clone.clone(),
+                                thread_id: None,
+                                turn_id: None,
+                                message: Some(line),
+                                tokens: None,
+                                raw: None,
+                            })
+                            .await;
+                    }
+                }
             }
         });
 
@@ -112,5 +158,37 @@ impl Harness for HermesHarness {
                 Some(format!("exit_status={:?}", status.code()))
             },
         })
+    }
+}
+
+fn translate_hermes_event(v: &serde_json::Value, pid: Option<&str>) -> AgentEvent {
+    let ty = v.get("type").and_then(|s| s.as_str()).unwrap_or("");
+    let session_id = v.get("session_id").and_then(|s| s.as_str()).map(str::to_string);
+    let turn_id = v.get("turn_id").and_then(|s| s.as_str()).map(str::to_string);
+    let kind = match ty {
+        "system" if v.get("subtype").and_then(|s| s.as_str()) == Some("init") => {
+            AgentEventKind::SessionStarted
+        }
+        "assistant" => AgentEventKind::Notification,
+        "user" => AgentEventKind::OtherMessage,
+        "result" => match v.get("subtype").and_then(|s| s.as_str()).unwrap_or("") {
+            "success" => AgentEventKind::TurnCompleted,
+            _ => AgentEventKind::TurnFailed,
+        },
+        _ => AgentEventKind::OtherMessage,
+    };
+    AgentEvent {
+        kind,
+        timestamp: Utc::now(),
+        agent_pid: pid.map(str::to_string),
+        thread_id: session_id.clone(),
+        turn_id: turn_id.or(session_id),
+        message: v
+            .get("message")
+            .and_then(|m| m.get("content"))
+            .and_then(|c| c.as_str())
+            .map(str::to_string),
+        tokens: None,
+        raw: Some(v.clone()),
     }
 }

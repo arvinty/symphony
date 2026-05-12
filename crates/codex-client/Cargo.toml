@@ -1,0 +1,18 @@
+[package]
+name = "codex-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+build = "build.rs"
+
+[dependencies]
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+futures.workspace = true
+tracing.workspace = true
+async-trait.workspace = true
+
+[build-dependencies]
+serde_json.workspace = true

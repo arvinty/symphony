@@ -4,6 +4,7 @@ members = [
     "crates/symphony",
     "crates/symphony-core",
     "crates/linear-clone",
+    "crates/codex-client",
 ]
 
 [workspace.package]

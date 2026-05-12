@@ -25,11 +25,9 @@ The existing Hermes harness (`crates/symphony-core/src/harness/hermes.rs`,
 from stdout, emits each line as `AgentEvent::Notification`. No MCP, no
 policy, no approval interception, no tool-call bus events.
 
-## Information gap
+## Resolved decision
 
-I do not have the Hermes CLI installed locally and the codebase doesn't
-document its full flag set. Slice 3's design depends on which native
-capabilities Hermes exposes:
+The user confirmed Hermes has the native capabilities slice 3 needs:
 
 - **MCP server configuration.** Does Hermes accept a flag like Claude's
   `--mcp-config <path>`, or does it use a different mechanism (config
@@ -41,11 +39,11 @@ capabilities Hermes exposes:
 - **Approval round-trip.** Does Hermes pause and ask for approval, or is
   every action auto-executed?
 
-These determine which option from section 1 below applies. The user has
-to answer for the brainstorm to proceed.
+That selects Option B: use native Hermes flags and mirror the Claude
+harness shape for MCP wiring, policy flags, and tool-call surfacing.
 
-## Where we paused
+## Final state
 
-After section 1 (architecture) was presented with three options
-(symphony-side approximation / native Hermes flags / hybrid). User
-selection pending.
+The brainstorm is complete. The remaining caveat is runtime validation
+against a real Hermes CLI, covered by the env-gated slice 3 smoke test
+and manual verification checklist.

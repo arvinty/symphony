@@ -1,8 +1,8 @@
 # Symphony v1.0 — Slice 3: Hermes Harness with Linear MCP + Policy
 
 **Date:** 2026-05-13
-**Status:** Approved (design); pending implementation plan
-**Scope:** Slice 3 of phase 1. Builds on slice 1 (merged) and slice 2 (`v1-slice2`, PR pending). Lands on `v1-slice3` off the eventual `main` once slice 2 merges; currently branched off `v1-slice2` so it stacks.
+**Status:** Implemented; plan drafted
+**Scope:** Slice 3 of phase 1. Builds on slice 1 and slice 2 after both land on `main`.
 
 ## Goal
 
@@ -16,7 +16,7 @@ Bring the Hermes harness to parity with slice 1's Claude harness: Linear MCP bri
 
 ## Architecture
 
-A single file edit. `crates/symphony-core/src/harness/hermes.rs` grows from 101 LOC to ~180 LOC; no new modules, no workspace dependency changes.
+The runtime change is concentrated in `crates/symphony-core/src/harness/hermes.rs`, with supporting tests, docs, and an env-gated smoke feature. No new shared runtime modules are added.
 
 Three additive changes:
 
@@ -125,7 +125,7 @@ No new error types.
 
 ## Testing
 
-### Unit: `translate_hermes_policy_args` (`crates/symphony-core/tests/hermes_policy_tests.rs`)
+### Unit: `translate_hermes_policy_args` (`crates/symphony-core/src/harness/hermes.rs`)
 
 Parametrize the 9 `(PermissionMode, SandboxProfile)` combinations, assert flag vectors. ~40 LOC.
 
@@ -145,11 +145,11 @@ The test then asserts:
 
 ### End-to-end smoke (`slice3_smoke.rs`)
 
-Gated by `e2e_hermes` cargo feature + `HERMES_E2E=1` env var. Mirrors slice 1 and 2's smokes: documented manual verification, no programmatic assertions. Requires a real Hermes CLI on PATH.
+Gated by `e2e_hermes` cargo feature, ignored by default, and requires `HERMES_E2E=1` when explicitly run. It performs a minimal real-CLI availability check, then documents manual verification steps. Requires a real Hermes CLI on PATH.
 
 ## Pre-merge checklist
 
-- [ ] `cargo test -p symphony-core --test hermes_policy_tests` green.
+- [ ] `cargo test -p symphony-core hermes::tests` green.
 - [ ] `cargo test -p symphony-core --test hermes_integration` green.
 - [ ] `cargo test --workspace` no regressions.
 - [ ] `cargo clippy --workspace -- -D warnings` clean.

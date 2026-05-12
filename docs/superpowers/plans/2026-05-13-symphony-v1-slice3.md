@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Mirror slice 1's Claude harness on Hermes — policy translation, MCP bridge wiring, tool-call bus events. No new modules, single-file edit (~80 LOC delta).
+**Goal:** Mirror slice 1's Claude harness on Hermes — policy translation, MCP bridge wiring, tool-call bus events. Runtime changes stay concentrated in the Hermes harness, with supporting tests and docs.
 
 **Architecture:** Three additive changes to `crates/symphony-core/src/harness/hermes.rs`. See `docs/superpowers/specs/2026-05-13-symphony-v1-slice3-design.md`.
 
@@ -11,7 +11,6 @@
 ## File Structure
 
 **Created:**
-- `crates/symphony-core/tests/hermes_policy_tests.rs`
 - `crates/symphony-core/tests/hermes_integration.rs`
 - `crates/symphony-core/tests/slice3_smoke.rs`
 
@@ -25,15 +24,14 @@
 ## Task 1: Policy translation
 
 **Files:**
-- Create: `crates/symphony-core/tests/hermes_policy_tests.rs`
 - Modify: `crates/symphony-core/src/harness/hermes.rs`
 
 - [ ] **Step 1: Write failing tests**
 
 ```rust
-// crates/symphony-core/tests/hermes_policy_tests.rs
-use symphony_core::harness::hermes::translate_hermes_policy_args;
-use symphony_core::policy::{PermissionMode, Policy};
+// crates/symphony-core/src/harness/hermes.rs
+use super::translate_hermes_policy_args;
+use crate::policy::{PermissionMode, Policy};
 
 fn with_mode(mode: PermissionMode) -> Policy {
     let mut p = Policy::default();
@@ -82,7 +80,7 @@ fn no_allowed_tools_omits_the_flag() {
 
 - [ ] **Step 2: Verify failures**
 
-Run: `cargo test -p symphony-core --test hermes_policy_tests`
+Run: `cargo test -p symphony-core hermes::tests`
 Expected: `translate_hermes_policy_args` not in scope.
 
 - [ ] **Step 3: Implement**
@@ -92,7 +90,7 @@ Add to `hermes.rs`:
 ```rust
 use crate::policy::{PermissionMode, Policy};
 
-pub fn translate_hermes_policy_args(p: &Policy) -> Vec<String> {
+fn translate_hermes_policy_args(p: &Policy) -> Vec<String> {
     let mode = match p.permission_mode {
         PermissionMode::AcceptEdits => "acceptEdits",
         PermissionMode::RequireApproval => "default",
@@ -109,12 +107,12 @@ pub fn translate_hermes_policy_args(p: &Policy) -> Vec<String> {
 
 - [ ] **Step 4: Verify pass**
 
-Run: `cargo test -p symphony-core --test hermes_policy_tests` → green.
+Run: `cargo test -p symphony-core hermes::tests` → green.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add crates/symphony-core/src/harness/hermes.rs crates/symphony-core/tests/hermes_policy_tests.rs
+git add crates/symphony-core/src/harness/hermes.rs
 git commit -m "Add Hermes policy translation mirroring Claude's permission-mode flags"
 ```
 
@@ -422,12 +420,12 @@ git commit -m "Document Hermes harness slice 3 capabilities"
 
 ## Pre-merge checklist
 
-- [ ] `cargo test -p symphony-core --test hermes_policy_tests` green.
+- [ ] `cargo test -p symphony-core hermes::tests` green.
 - [ ] `cargo test -p symphony-core --test hermes_integration` green.
 - [ ] `cargo test --workspace` no regressions.
 - [ ] `cargo clippy --workspace -- -D warnings` clean.
 - [ ] Manual: install Hermes, claim an issue with `harness: hermes`, observe MCP-served Linear tool call on the dashboard, confirm `--permission-mode` is respected on writes.
-- [ ] `docs/superpowers/brainstorms/2026-05-13-symphony-v1-slice3-state.md` deleted.
+- [ ] `docs/superpowers/brainstorms/2026-05-13-symphony-v1-slice3-state.md` reconciled with the final design decision.
 
 ## Risks & rollback
 

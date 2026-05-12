@@ -8,7 +8,7 @@ use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
-pub fn translate_hermes_policy_args(p: &Policy) -> Vec<String> {
+fn translate_hermes_policy_args(p: &Policy) -> Vec<String> {
     let mode = match p.permission_mode {
         PermissionMode::AcceptEdits => "acceptEdits",
         PermissionMode::RequireApproval => "default",
@@ -90,6 +90,13 @@ impl Harness for HermesHarness {
         })?;
         let pid = child.id().map(|p| p.to_string());
         let stdout = child.stdout.take().expect("stdout piped");
+        let stderr = child.stderr.take().expect("stderr piped");
+        let stderr_handle = tokio::spawn(async move {
+            let mut reader = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                tracing::debug!(target = "hermes.stderr", "{}", line);
+            }
+        });
 
         let tx_clone = tx.clone();
         let pid_clone = pid.clone();
@@ -148,6 +155,7 @@ impl Harness for HermesHarness {
 
         let status = child.wait().await.map_err(SymphonyError::Io)?;
         let _ = handle.await;
+        let _ = stderr_handle.await;
         Ok(HarnessOutcome {
             thread_id: format!("hermes-{}", uuid::Uuid::new_v4()),
             turn_id: format!("turn-{}", uuid::Uuid::new_v4()),
@@ -183,12 +191,84 @@ fn translate_hermes_event(v: &serde_json::Value, pid: Option<&str>) -> AgentEven
         agent_pid: pid.map(str::to_string),
         thread_id: session_id.clone(),
         turn_id: turn_id.or(session_id),
-        message: v
-            .get("message")
-            .and_then(|m| m.get("content"))
-            .and_then(|c| c.as_str())
-            .map(str::to_string),
+        message: extract_message_text(v),
         tokens: None,
         raw: Some(v.clone()),
+    }
+}
+
+fn extract_message_text(v: &serde_json::Value) -> Option<String> {
+    let content = v.get("message").and_then(|m| m.get("content"));
+    if let Some(text) = content.and_then(|c| c.as_str()) {
+        return Some(text.to_string());
+    }
+    if let Some(arr) = content.and_then(|c| c.as_array()) {
+        for block in arr {
+            if block.get("type").and_then(|s| s.as_str()) != Some("text") {
+                continue;
+            }
+            if let Some(text) = block.get("text").and_then(|t| t.as_str()) {
+                return Some(text.to_string());
+            }
+        }
+    }
+    v.get("result")
+        .and_then(|r| r.as_str())
+        .map(str::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::translate_hermes_policy_args;
+    use crate::policy::{PermissionMode, Policy};
+
+    fn with_mode(mode: PermissionMode) -> Policy {
+        let mut p = Policy::default();
+        p.permission_mode = mode;
+        p
+    }
+
+    #[test]
+    fn accept_edits_maps_to_accept_edits_flag() {
+        let p = with_mode(PermissionMode::AcceptEdits);
+        let args = translate_hermes_policy_args(&p);
+        assert_eq!(
+            args,
+            vec!["--permission-mode".to_string(), "acceptEdits".into()]
+        );
+    }
+
+    #[test]
+    fn require_approval_maps_to_default_mode() {
+        let p = with_mode(PermissionMode::RequireApproval);
+        let args = translate_hermes_policy_args(&p);
+        assert_eq!(
+            args,
+            vec!["--permission-mode".to_string(), "default".into()]
+        );
+    }
+
+    #[test]
+    fn read_only_maps_to_plan_mode() {
+        let p = with_mode(PermissionMode::ReadOnly);
+        let args = translate_hermes_policy_args(&p);
+        assert_eq!(args, vec!["--permission-mode".to_string(), "plan".into()]);
+    }
+
+    #[test]
+    fn allowed_tools_render_as_comma_joined() {
+        let mut p = Policy::default();
+        p.allowed_tools = vec!["Bash".into(), "Edit".into()];
+        let args = translate_hermes_policy_args(&p);
+        assert!(args.contains(&"--allowed-tools".to_string()));
+        let idx = args.iter().position(|s| s == "--allowed-tools").unwrap();
+        assert_eq!(args[idx + 1], "Bash,Edit");
+    }
+
+    #[test]
+    fn no_allowed_tools_omits_the_flag() {
+        let p = Policy::default();
+        let args = translate_hermes_policy_args(&p);
+        assert!(!args.contains(&"--allowed-tools".to_string()));
     }
 }

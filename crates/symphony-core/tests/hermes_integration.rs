@@ -15,6 +15,24 @@ use symphony_core::policy::Policy;
 use symphony_core::workflow::load_workflow;
 use tokio::sync::mpsc;
 
+struct PathGuard {
+    original: String,
+}
+
+impl PathGuard {
+    fn prepend(dir: &Path) -> Self {
+        let original = std::env::var("PATH").unwrap_or_default();
+        std::env::set_var("PATH", format!("{}:{}", dir.display(), original));
+        Self { original }
+    }
+}
+
+impl Drop for PathGuard {
+    fn drop(&mut self) {
+        std::env::set_var("PATH", &self.original);
+    }
+}
+
 fn write_temp_workflow() -> (PathBuf, PathBuf) {
     let dir = std::env::temp_dir().join(format!("symphony_hermes_test_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -65,12 +83,7 @@ async fn hermes_passes_policy_flags_and_surfaces_tool_use() {
     let argv_log = bin_dir.join("argv.txt");
     install_hermes_shim(&bin_dir, &argv_log);
 
-    let orig_path = std::env::var("PATH").unwrap_or_default();
-    // Test serial PATH munging: we wrap the body so we always restore on the
-    // happy path. Concurrent test execution within the same crate would
-    // interfere, but `cargo test` runs integration tests sequentially per
-    // process unless --test-threads is overridden.
-    std::env::set_var("PATH", format!("{}:{}", bin_dir.display(), orig_path));
+    let _path_guard = PathGuard::prepend(&bin_dir);
 
     let (tx, mut rx) = mpsc::channel(64);
     let bus = OrchestratorEventBus::new(64);
@@ -98,8 +111,6 @@ async fn hermes_passes_policy_flags_and_surfaces_tool_use() {
     .await
     .expect("did not time out")
     .expect("ran");
-
-    std::env::set_var("PATH", orig_path);
 
     assert!(outcome.success, "outcome: {outcome:?}");
 

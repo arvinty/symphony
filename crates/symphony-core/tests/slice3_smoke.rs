@@ -20,11 +20,19 @@
 #![cfg(feature = "e2e_hermes")]
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "manual smoke requiring a real Hermes CLI and configured linear-clone"]
 async fn slice3_smoke_hermes_uses_linear_mcp() {
-    if std::env::var("HERMES_E2E").is_err() {
-        eprintln!("skipping: set HERMES_E2E=1 to run");
-        return;
-    }
+    assert_eq!(
+        std::env::var("HERMES_E2E").as_deref(),
+        Ok("1"),
+        "set HERMES_E2E=1 when explicitly running this ignored smoke test"
+    );
+    let status = tokio::process::Command::new("hermes")
+        .arg("--version")
+        .status()
+        .await
+        .expect("hermes CLI must be installed on PATH");
+    assert!(status.success(), "`hermes --version` failed");
     eprintln!("Slice 3 smoke is documented as a manual verification gate.");
     eprintln!("Steps:");
     eprintln!("  1. Start linear-clone on :4000 with LINEAR_CLONE_ADMIN_TOKEN=dev-admin.");

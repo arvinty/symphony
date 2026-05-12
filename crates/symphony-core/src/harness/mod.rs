@@ -10,7 +10,7 @@ use tokio::sync::mpsc;
 
 pub mod claude_code;
 pub mod hermes;
-pub mod codex_stub;
+pub mod codex;
 pub mod approvals;
 pub mod mcp_bridge;
 
@@ -45,6 +45,22 @@ pub fn select_harness(name: &str) -> Box<dyn Harness + Send + Sync> {
     match name {
         "claude_code" | "claude" | "claude-code" => Box::new(claude_code::ClaudeCodeHarness::default()),
         "hermes" => Box::new(hermes::HermesHarness::default()),
-        _ => Box::new(codex_stub::CodexStubHarness::default()),
+        "codex" | "codex-app-server" => Box::new(codex::CodexHarness::default()),
+        other => Box::new(UnknownHarness { name: other.to_string() }),
+    }
+}
+
+#[derive(Clone)]
+struct UnknownHarness {
+    name: String,
+}
+
+#[async_trait]
+impl Harness for UnknownHarness {
+    fn name(&self) -> &'static str {
+        "unknown"
+    }
+    async fn run(&self, _ctx: HarnessContext<'_>) -> Result<HarnessOutcome> {
+        Err(crate::error::SymphonyError::UnknownHarness(self.name.clone()))
     }
 }

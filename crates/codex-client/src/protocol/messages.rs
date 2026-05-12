@@ -73,7 +73,7 @@ pub enum ClientRequest {
 /// variant in order — `Known` matches enumerated methods via tag/content,
 /// and unmatched frames fall through to `Unknown` which preserves the raw
 /// method + params for forensics.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(untagged)]
 pub enum ServerNotification {
     Known(KnownServerNotification),
@@ -84,7 +84,7 @@ pub enum ServerNotification {
     },
 }
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(tag = "method", content = "params")]
 pub enum KnownServerNotification {
     #[serde(rename = "turn/started")]

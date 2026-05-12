@@ -1,7 +1,15 @@
-# Slice 2 brainstorm — paused state (2026-05-10)
+# Slice 2 brainstorm — complete (resumed and closed 2026-05-13)
 
-Resume by saying "go" or "continue slice 2 brainstorm" in a new session on
-the other machine. Branch: `v1-slice1` (slice 1 PR open at #1). Slice 2 work
+**Status:** Brainstorm complete. Sections 2–5 worked through and incorporated.
+Output artifacts:
+- Spec: `docs/superpowers/specs/2026-05-13-symphony-v1-slice2-design.md`
+- Plan: `docs/superpowers/plans/2026-05-13-symphony-v1-slice2.md`
+
+Notable correction during resume: v2 protocol review revealed approvals are
+notification-driven (no `ServerRequest` enum in v2). Decision 4 was revised
+to reflect this; see the spec for the canonical model.
+
+Branch: `v1-slice1` (slice 1 PR open at #1). Slice 2 work
 will land on a new branch `v1-slice2` off `main` once slice 1 merges.
 
 ## Decisions captured so far
@@ -15,16 +23,27 @@ will land on a new branch `v1-slice2` off `main` once slice 1 merges.
 3. **Tool routing:** Reuse the existing `symphony mcp-bridge` subcommand by
    configuring Codex's `mcp_servers` to spawn it. Same bridge, no new tool
    plumbing.
-4. **Approval routing:** Unified through `ApprovalRouter`. All four Codex
-   approval types (`ExecCommandApproval`, `ApplyPatchApproval`,
-   `PermissionsRequestApproval`, `ItemGuardianApprovalReview`) wrap into
-   one `OrchestratorEvent::ApprovalRequest` with a `tool` field naming the
-   Codex approval type. Operator decides via existing dashboard toast.
-5. **Sandbox mapping:** Direct. `Policy.sandbox` →
+4. **Approval routing (REVISED after v2 schema review).** v2 inverts v1:
+   approvals are *notification-driven*, not request-driven. There is no
+   `ServerRequest` enum in v2. Codex's internal guardian assesses each action
+   based on the `permissions` we set on `turn/start` and emits
+   `ItemGuardianApprovalReviewStartedNotification` →
+   `ItemGuardianApprovalReviewCompletedNotification` (status:
+   `approved` / `denied` / `timedOut` / `aborted`). The client overrides
+   a denied action by sending `ClientRequest: thread/approveGuardianDeniedAction`.
+   Translation per `Policy.permission_mode` (option C):
+   - `AcceptEdits` → guardian auto-approves per sandbox; on `denied`,
+     emit `OrchestratorEvent::ApprovalRequest` for operator override.
+   - `RequireApproval` → set `permissions` to most-restrictive profile so
+     guardian denies most actions; every denial reaches the operator.
+   - `ReadOnly` → strict read-only profile; denials stand, no override path.
+5. **Sandbox mapping:** Direct, and now load-bearing (the primary policy
+   gate, not redundant with operator approvals). `Policy.sandbox` →
    `WorkspaceWrite` → `workspace-write`,
    `ReadOnly` → `read-only`,
    `Unrestricted` → `danger-full-access`.
    Passed via `permissions` on `turn/start`.
+   Concrete `Permissions` struct shape in v2 is open question OQ-2.
 6. **Structuring approach:** Bottom-up staged commits — types → transport →
    client+harness — all in a new crate `crates/codex-client` plus a thin
    harness adapter in `symphony-core`.

@@ -33,7 +33,7 @@ struct RetryRequest {
 #[derive(Debug, Clone)]
 enum RunPhase {
     Implementer,
-    Reviewer { pr_url: String },
+    Reviewer,
 }
 
 /// One run dispatch, drained by the run-dispatcher task.
@@ -107,6 +107,14 @@ impl Orchestrator {
 
     pub fn approval_router(&self) -> ApprovalRouter {
         self.inner.approval_router.clone()
+    }
+
+    /// Reads the captured PR URL for an issue, if `open_pr` succeeded for it.
+    /// Returns `None` if no PR has been opened (or if `open_pr` failed). Used
+    /// by the reviewer dispatch internally and exposed publicly for tests
+    /// and dashboard surfaces.
+    pub fn pr_url_for(&self, issue_id: &str) -> Option<String> {
+        self.inner.pr_urls.lock().unwrap().get(issue_id).cloned()
     }
 
     pub async fn retry_open_pr(&self, identifier: &str) -> anyhow::Result<String> {
@@ -383,7 +391,7 @@ impl Orchestrator {
 
         let harness_name = match &request.phase {
             RunPhase::Implementer => cfg.agent.harness.clone(),
-            RunPhase::Reviewer { .. } => cfg
+            RunPhase::Reviewer => cfg
                 .reviewer
                 .harness
                 .clone()
@@ -576,7 +584,7 @@ impl Orchestrator {
                                 prompt_override: Some(prompt),
                                 follow_up_count: 0,
                                 policy: cfg.reviewer.effective_policy(),
-                                phase: RunPhase::Reviewer { pr_url },
+                                phase: RunPhase::Reviewer,
                             });
                         }
                         Err(e) => {
@@ -590,7 +598,7 @@ impl Orchestrator {
                         }
                     }
                 }
-            } else if matches!(request.phase, RunPhase::Reviewer { .. }) {
+            } else if matches!(request.phase, RunPhase::Reviewer) {
                 // Reviewer turn succeeded — emit terminal event, no retry/follow-up.
                 let _ = self.event_bus().send(
                     crate::events::broadcast::OrchestratorEvent::ReviewerCompleted {
@@ -602,7 +610,7 @@ impl Orchestrator {
             } else {
                 self.schedule_retry(&issue, 1, CONTINUATION_DELAY_MS, None, request.policy.clone());
             }
-        } else if matches!(request.phase, RunPhase::Reviewer { .. }) {
+        } else if matches!(request.phase, RunPhase::Reviewer) {
             // Reviewer turn failed — emit terminal event but do not retry; the issue
             // is already on its terminal trajectory from the implementer flow.
             let _ = self.event_bus().send(

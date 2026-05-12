@@ -50,3 +50,42 @@ fn default_sandbox() -> SandboxProfile {
 fn default_timeout() -> u64 {
     300_000
 }
+
+// --- Codex translation ---
+//
+// v2's `turn/start` and `thread/start` take approval policy and sandbox policy
+// as two independent fields. Slice 2 sets them per `Policy.permission_mode`
+// × `Policy.sandbox`. See docs/superpowers/specs/2026-05-13-...-design.md.
+
+use codex_client::protocol::v2::{AskForApproval, SandboxPolicy};
+
+pub fn translate_codex_approval_policy(p: &Policy) -> AskForApproval {
+    match p.permission_mode {
+        // Guardian denies most things; operator overrides each denial.
+        PermissionMode::RequireApproval => AskForApproval::Untrusted,
+        // Guardian doesn't interrupt; we rely on the sandbox profile alone.
+        PermissionMode::AcceptEdits | PermissionMode::ReadOnly => AskForApproval::Never,
+    }
+}
+
+pub fn translate_codex_sandbox_policy(p: &Policy) -> SandboxPolicy {
+    match (&p.permission_mode, &p.sandbox) {
+        // ReadOnly mode forces the strictest sandbox regardless of `sandbox`.
+        (PermissionMode::ReadOnly, _) => SandboxPolicy::ReadOnly { network_access: false },
+        // RequireApproval falls back to read-only so the guardian gates writes.
+        (PermissionMode::RequireApproval, _) => SandboxPolicy::ReadOnly { network_access: false },
+        // AcceptEdits maps directly from the sandbox profile.
+        (PermissionMode::AcceptEdits, SandboxProfile::ReadOnly) => {
+            SandboxPolicy::ReadOnly { network_access: false }
+        }
+        (PermissionMode::AcceptEdits, SandboxProfile::WorkspaceWrite) => {
+            SandboxPolicy::WorkspaceWrite {
+                exclude_slash_tmp: false,
+                exclude_tmpdir_env_var: false,
+                network_access: false,
+                writable_roots: vec![],
+            }
+        }
+        (PermissionMode::AcceptEdits, SandboxProfile::Unrestricted) => SandboxPolicy::DangerFullAccess,
+    }
+}

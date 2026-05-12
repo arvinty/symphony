@@ -48,6 +48,10 @@ pub enum SymphonyError {
     TurnInputRequired,
     #[error("io: {0}")]
     Io(#[from] std::io::Error),
+    #[error("unknown_harness: {0}")]
+    UnknownHarness(String),
+    #[error("codex_client: {0}")]
+    CodexClient(String),
     #[error("other: {0}")]
     Other(String),
 }

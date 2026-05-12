@@ -75,7 +75,7 @@ Wired into `ServiceConfig` (parsed from WORKFLOW.md front matter) and projected 
 #[derive(Debug, Clone)]
 enum RunPhase {
     Implementer,
-    Reviewer { pr_url: String },
+    Reviewer,
 }
 ```
 
@@ -84,7 +84,7 @@ enum RunPhase {
 ### Orchestrator hook (~50 LOC)
 
 In `process_run_request`'s success branch, after the link-PR follow-up turn completes successfully (`follow_up_count == 1` and we have the PR URL in scope), check `cfg.reviewer.enabled` and dispatch a `RunRequest` with:
-- `phase: RunPhase::Reviewer { pr_url }`
+- `phase: RunPhase::Reviewer`
 - `policy:` the resolved reviewer policy
 - `prompt_override:` the rendered reviewer prompt (Liquid template + variables)
 
@@ -94,11 +94,11 @@ The PR URL needs to be captured during the initial `open_pr` call and threaded f
 
 `process_run_request` picks the harness based on the `RunPhase`:
 - `Implementer` → `cfg.agent.harness` (unchanged behavior).
-- `Reviewer { .. }` → `cfg.reviewer.harness.unwrap_or(cfg.agent.harness)`.
+- `Reviewer` → `cfg.reviewer.harness.unwrap_or(cfg.agent.harness)`.
 
 And picks the policy based on phase:
 - `Implementer` → `request.policy` (existing captured policy).
-- `Reviewer { .. }` → reviewer policy from config (default ReadOnly+ReadOnly).
+- `Reviewer` → reviewer policy from config (default ReadOnly+ReadOnly).
 
 ### Default reviewer prompt template (~25 LOC, built into the code)
 
@@ -140,7 +140,7 @@ Existing `AgentEvent` flow (turn-level events) continues unchanged — operators
    - Resolve reviewer policy (`cfg.reviewer.policy` or default ReadOnly).
    - Resolve reviewer harness (`cfg.reviewer.harness` or fall back to `cfg.agent.harness`).
    - Render reviewer prompt (Liquid template + issue/PR variables).
-   - Build `RunRequest { phase: Reviewer { pr_url }, policy, prompt_override, follow_up_count: 0 }`.
+   - Build `RunRequest { phase: Reviewer, policy, prompt_override, follow_up_count: 0 }`.
    - Send on `run_tx`.
    - Emit `OrchestratorEvent::ReviewerStarted`.
 5. Worker pops the request, dispatches to the selected harness with the reviewer policy. Linear MCP bridge is provisioned the same way — same issue token, same endpoint.
@@ -152,7 +152,7 @@ Existing `AgentEvent` flow (turn-level events) continues unchanged — operators
 
 Currently the PR URL only exists transiently inside the `open_pr` success branch. New requirement: persist it on per-issue runtime state for the reviewer dispatch.
 
-Simplest: a `HashMap<IssueId, String>` on `Orchestrator::inner.pr_urls` guarded by `Mutex`. Set on PR open success, read when dispatching reviewer, cleared when issue transitions to terminal state. ~15 LOC.
+Simplest: a `HashMap<IssueId, String>` on `Orchestrator::inner.pr_urls` guarded by a Tokio `RwLock`. Set on PR open success, read when dispatching reviewer, cleared when issue transitions to terminal state. ~15 LOC.
 
 ## Error Handling
 
@@ -187,7 +187,7 @@ No new error types beyond reusing `SymphonyError`.
 ### Integration: orchestrator dispatches reviewer (`crates/symphony-core/tests/reviewer_dispatch_tests.rs`)
 
 Build a minimal orchestrator with a stub harness that succeeds immediately. Inject a fake PR URL into the per-issue state. Manually trigger the post-success path that would normally fire after `link_pull_request` follow-up. Assert:
-- A new `RunRequest` is sent on `run_tx` with `phase: Reviewer { pr_url }`.
+- A new `RunRequest` is sent on `run_tx` with `phase: Reviewer`.
 - `OrchestratorEvent::ReviewerStarted` fires on the bus with the expected pr_url.
 - The reviewer policy is the configured (or default) reviewer policy, not the implementer's.
 

@@ -296,7 +296,7 @@ git commit -m "Add ReviewerStarted/ReviewerCompleted OrchestratorEvent variants"
 #[derive(Debug, Clone)]
 pub(crate) enum RunPhase {
     Implementer,
-    Reviewer { pr_url: String },
+    Reviewer,
 }
 ```
 
@@ -306,7 +306,7 @@ Add `phase: RunPhase` to `RunRequest` struct. Update every `RunRequest { ... }` 
 
 In `OrchestratorInner` (or wherever per-issue runtime state lives), add:
 ```rust
-pr_urls: std::sync::Mutex<std::collections::HashMap<String, String>>, // issue_id -> pr_url
+pr_urls: tokio::sync::RwLock<std::collections::HashMap<String, String>>, // issue_id -> pr_url
 ```
 
 In the `open_pr` success branch, insert `(issue.id.clone(), url.clone())`.
@@ -343,7 +343,7 @@ if request.follow_up_count == 1
     && cfg.reviewer.enabled
     && matches!(request.phase, RunPhase::Implementer)
 {
-    let pr_url = self.inner.pr_urls.lock().unwrap().get(&issue.id).cloned();
+    let pr_url = self.inner.pr_urls.read().await.get(&issue.id).cloned();
     if let Some(pr_url) = pr_url {
         let template = cfg
             .reviewer
@@ -369,7 +369,7 @@ if request.follow_up_count == 1
                     prompt_override: Some(prompt),
                     follow_up_count: 0,
                     policy: cfg.reviewer.effective_policy(),
-                    phase: RunPhase::Reviewer { pr_url },
+                    phase: RunPhase::Reviewer,
                 });
             }
             Err(e) => {
@@ -386,7 +386,7 @@ if request.follow_up_count == 1
 }
 
 // Emit ReviewerCompleted at the end of a Reviewer-phase run.
-if matches!(request.phase, RunPhase::Reviewer { .. }) {
+if matches!(request.phase, RunPhase::Reviewer) {
     let _ = self.event_bus().send(
         crate::events::broadcast::OrchestratorEvent::ReviewerCompleted {
             issue_id: issue.id.clone(),
@@ -404,7 +404,7 @@ In the harness selection block:
 ```rust
 let harness_name = match &request.phase {
     RunPhase::Implementer => cfg.agent.harness.clone(),
-    RunPhase::Reviewer { .. } => cfg
+    RunPhase::Reviewer => cfg
         .reviewer
         .harness
         .clone()
@@ -418,7 +418,7 @@ let harness = crate::harness::select_harness(&harness_name);
 Reviewer failure should not trigger the normal retry path. Guard the retry dispatch:
 
 ```rust
-if !matches!(request.phase, RunPhase::Reviewer { .. }) {
+if !matches!(request.phase, RunPhase::Reviewer) {
     self.fail_and_schedule_retry(...);
 }
 ```
@@ -448,7 +448,7 @@ The test should:
 1. Build an `Orchestrator` with `reviewer.enabled: true` and a stub harness that records its calls.
 2. Inject a fake PR URL into `inner.pr_urls`.
 3. Push a `RunRequest` representing the link-PR follow-up turn completing (`follow_up_count: 1`, `phase: Implementer`).
-4. Assert a new `RunRequest` is sent on `run_tx` within a short timeout, with `phase: RunPhase::Reviewer { pr_url }`.
+4. Assert a new `RunRequest` is sent on `run_tx` within a short timeout, with `phase: RunPhase::Reviewer`.
 5. Assert `OrchestratorEvent::ReviewerStarted` is broadcast.
 
 Pattern follows existing `approval_flow_tests.rs`. ~120 LOC.

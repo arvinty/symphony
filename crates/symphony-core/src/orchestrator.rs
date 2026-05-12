@@ -64,7 +64,7 @@ struct OrchestratorInner {
     retry_rx: Mutex<Option<mpsc::UnboundedReceiver<RetryRequest>>>,
     event_bus: crate::events::broadcast::OrchestratorEventBus,
     approval_router: ApprovalRouter,
-    pr_urls: std::sync::Mutex<std::collections::HashMap<String, String>>,
+    pr_urls: RwLock<std::collections::HashMap<String, String>>,
 }
 
 impl Orchestrator {
@@ -96,7 +96,7 @@ impl Orchestrator {
                 retry_rx: Mutex::new(Some(retry_rx)),
                 event_bus: crate::events::broadcast::OrchestratorEventBus::new(256),
                 approval_router: ApprovalRouter::new(),
-                pr_urls: std::sync::Mutex::new(std::collections::HashMap::new()),
+                pr_urls: RwLock::new(std::collections::HashMap::new()),
             }),
         }
     }
@@ -113,8 +113,8 @@ impl Orchestrator {
     /// Returns `None` if no PR has been opened (or if `open_pr` failed). Used
     /// by the reviewer dispatch internally and exposed publicly for tests
     /// and dashboard surfaces.
-    pub fn pr_url_for(&self, issue_id: &str) -> Option<String> {
-        self.inner.pr_urls.lock().unwrap().get(issue_id).cloned()
+    pub async fn pr_url_for(&self, issue_id: &str) -> Option<String> {
+        self.inner.pr_urls.read().await.get(issue_id).cloned()
     }
 
     pub async fn retry_open_pr(&self, identifier: &str) -> anyhow::Result<String> {
@@ -155,8 +155,8 @@ impl Orchestrator {
         let url = crate::vcs::open_pr(&workspace_path, &title, &body, &branch).await?;
         self.inner
             .pr_urls
-            .lock()
-            .unwrap()
+            .write()
+            .await
             .insert(issue_id.clone(), url.clone());
         let _ = self.event_bus().send(crate::events::broadcast::OrchestratorEvent::PrOpened {
             issue_id,
@@ -486,7 +486,7 @@ impl Orchestrator {
             let mut follow_up: Option<String> = None;
 
             // VCS pipeline — best-effort, only on first (non-follow-up) run.
-            if request.follow_up_count == 0 {
+            if request.follow_up_count == 0 && matches!(request.phase, RunPhase::Implementer) {
                 if let Some(remote) = cfg.vcs.remote.as_deref() {
                     let prefix = cfg.vcs.branch_prefix.as_deref().unwrap_or("symphony/");
                     let branch = format!("{prefix}{}", issue.identifier);
@@ -504,8 +504,8 @@ impl Orchestrator {
                                     Ok(url) => {
                                         self.inner
                                             .pr_urls
-                                            .lock()
-                                            .unwrap()
+                                            .write()
+                                            .await
                                             .insert(issue.id.clone(), url.clone());
                                         let _ = bus.send(crate::events::broadcast::OrchestratorEvent::PrOpened {
                                             issue_id: issue.id.clone(),
@@ -555,8 +555,8 @@ impl Orchestrator {
                 let pr_url = self
                     .inner
                     .pr_urls
-                    .lock()
-                    .unwrap()
+                    .read()
+                    .await
                     .get(&issue.id)
                     .cloned();
                 if let Some(pr_url) = pr_url {

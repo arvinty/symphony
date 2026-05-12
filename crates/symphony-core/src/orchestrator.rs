@@ -498,24 +498,27 @@ impl Orchestrator {
                 // anything pending so push_branch has something to push.
                 let bus = self.event_bus();
                 let commit_msg = format!("Symphony: {} ({})", issue.title, issue.identifier);
-                match crate::vcs::commit_pending(&workspace.path, &commit_msg).await {
+                let auto_commit_ok = match crate::vcs::commit_pending(&workspace.path, &commit_msg).await {
                     Ok(Some(sha)) => {
                         let _ = bus.send(crate::events::broadcast::OrchestratorEvent::AutoCommitted {
                             issue_id: issue.id.clone(),
                             sha,
                         });
+                        true
                     }
-                    Ok(None) => { /* clean tree — nothing to commit */ }
+                    Ok(None) => true,
                     Err(e) => {
                         let _ = bus.send(crate::events::broadcast::OrchestratorEvent::VcsError {
                             issue_id: issue.id.clone(),
                             stage: "auto_commit".into(),
                             message: e.to_string(),
                         });
+                        false
                     }
-                }
+                };
 
-                if let Some(remote) = cfg.vcs.remote.as_deref() {
+                if auto_commit_ok {
+                    if let Some(remote) = cfg.vcs.remote.as_deref() {
                     let prefix = cfg.vcs.branch_prefix.as_deref().unwrap_or("symphony/");
                     let branch = format!("{prefix}{}", issue.identifier);
                     match crate::vcs::push_branch(&workspace.path, remote, &branch).await {
@@ -561,6 +564,7 @@ impl Orchestrator {
                                 message: e.to_string(),
                             });
                         }
+                    }
                     }
                 }
             }

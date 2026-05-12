@@ -2,26 +2,40 @@ use std::process::Command;
 use symphony_core::vcs::{commit_pending, open_pr, push_branch};
 use tempfile::TempDir;
 
+fn git(workspace: &std::path::Path, args: &[&str]) {
+    let output = Command::new("git")
+        .args(args)
+        .current_dir(workspace)
+        .output()
+        .unwrap_or_else(|e| panic!("failed to spawn git {args:?}: {e}"));
+    assert!(
+        output.status.success(),
+        "git {args:?} failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn init_workspace_with_remote() -> (TempDir, TempDir) {
     let remote = TempDir::new().unwrap();
-    Command::new("git").args(["init", "--bare", "-q"]).current_dir(remote.path()).status().unwrap();
+    git(remote.path(), &["init", "--bare", "-q"]);
     let work = TempDir::new().unwrap();
-    Command::new("git").args(["init", "-q", "-b", "main"]).current_dir(work.path()).status().unwrap();
-    Command::new("git").args(["config", "user.email", "t@t"]).current_dir(work.path()).status().unwrap();
-    Command::new("git").args(["config", "user.name", "t"]).current_dir(work.path()).status().unwrap();
+    git(work.path(), &["init", "-q", "-b", "main"]);
+    git(work.path(), &["config", "user.email", "t@t"]);
+    git(work.path(), &["config", "user.name", "t"]);
     std::fs::write(work.path().join("a.txt"), "hi").unwrap();
-    Command::new("git").args(["add", "-A"]).current_dir(work.path()).status().unwrap();
-    Command::new("git").args(["commit", "-qm", "init"]).current_dir(work.path()).status().unwrap();
-    Command::new("git").args(["remote", "add", "origin", &remote.path().to_string_lossy()]).current_dir(work.path()).status().unwrap();
+    git(work.path(), &["add", "-A"]);
+    git(work.path(), &["commit", "-qm", "init"]);
+    git(work.path(), &["remote", "add", "origin", &remote.path().to_string_lossy()]);
     (work, remote)
 }
 
 #[tokio::test]
 async fn commit_pending_returns_none_on_clean_tree() {
     let work = TempDir::new().unwrap();
-    Command::new("git").args(["init", "-q", "-b", "main"]).current_dir(work.path()).status().unwrap();
-    Command::new("git").args(["config", "user.email", "t@t"]).current_dir(work.path()).status().unwrap();
-    Command::new("git").args(["config", "user.name", "t"]).current_dir(work.path()).status().unwrap();
+    git(work.path(), &["init", "-q", "-b", "main"]);
+    git(work.path(), &["config", "user.email", "t@t"]);
+    git(work.path(), &["config", "user.name", "t"]);
     let r = commit_pending(work.path(), "noop").await.unwrap();
     assert!(r.is_none(), "expected None on clean tree, got {r:?}");
 }
@@ -29,9 +43,9 @@ async fn commit_pending_returns_none_on_clean_tree() {
 #[tokio::test]
 async fn commit_pending_commits_untracked_files() {
     let work = TempDir::new().unwrap();
-    Command::new("git").args(["init", "-q", "-b", "main"]).current_dir(work.path()).status().unwrap();
-    Command::new("git").args(["config", "user.email", "t@t"]).current_dir(work.path()).status().unwrap();
-    Command::new("git").args(["config", "user.name", "t"]).current_dir(work.path()).status().unwrap();
+    git(work.path(), &["init", "-q", "-b", "main"]);
+    git(work.path(), &["config", "user.email", "t@t"]);
+    git(work.path(), &["config", "user.name", "t"]);
     std::fs::write(work.path().join("a.txt"), "hi").unwrap();
     let sha = commit_pending(work.path(), "Symphony: DEMO-1").await.unwrap();
     assert!(sha.is_some(), "expected a SHA, got None");
@@ -47,12 +61,12 @@ async fn commit_pending_commits_untracked_files() {
 #[tokio::test]
 async fn commit_pending_commits_modified_files() {
     let work = TempDir::new().unwrap();
-    Command::new("git").args(["init", "-q", "-b", "main"]).current_dir(work.path()).status().unwrap();
-    Command::new("git").args(["config", "user.email", "t@t"]).current_dir(work.path()).status().unwrap();
-    Command::new("git").args(["config", "user.name", "t"]).current_dir(work.path()).status().unwrap();
+    git(work.path(), &["init", "-q", "-b", "main"]);
+    git(work.path(), &["config", "user.email", "t@t"]);
+    git(work.path(), &["config", "user.name", "t"]);
     std::fs::write(work.path().join("a.txt"), "v1").unwrap();
-    Command::new("git").args(["add", "-A"]).current_dir(work.path()).status().unwrap();
-    Command::new("git").args(["commit", "-qm", "init"]).current_dir(work.path()).status().unwrap();
+    git(work.path(), &["add", "-A"]);
+    git(work.path(), &["commit", "-qm", "init"]);
     // Modify and commit_pending.
     std::fs::write(work.path().join("a.txt"), "v2").unwrap();
     let sha = commit_pending(work.path(), "Symphony: DEMO-2").await.unwrap();

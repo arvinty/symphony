@@ -24,6 +24,7 @@ use std::collections::HashMap;
 use std::process::Stdio;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 
@@ -42,8 +43,8 @@ impl Harness for CodexHarness {
             .unwrap_or_else(|_| std::path::PathBuf::from("symphony"));
         let mcp_inline_toml = format!(
             "mcp_servers.linear = {{ command = \"{}\", args = [\"mcp-bridge\", \"--issue\", \"{}\"] }}",
-            symphony_exe.to_string_lossy().replace('"', "\\\""),
-            ctx.issue_id.replace('"', "\\\"")
+            toml_basic_string(&symphony_exe.to_string_lossy()),
+            toml_basic_string(&ctx.issue_id)
         );
 
         // 2. Spawn codex.
@@ -65,13 +66,20 @@ impl Harness for CodexHarness {
         }
         cmd.env("SYMPHONY_ISSUE_ID", &ctx.issue_id);
 
-        let child = cmd.spawn().map_err(|e| {
+        let mut child = cmd.spawn().map_err(|e| {
             if e.kind() == std::io::ErrorKind::NotFound {
                 SymphonyError::AgentNotFound("codex".into())
             } else {
                 SymphonyError::Io(e)
             }
         })?;
+        let stderr = child.stderr.take().expect("stderr piped");
+        tokio::spawn(async move {
+            let mut reader = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = reader.next_line().await {
+                tracing::debug!(target = "codex.stderr", "{}", line);
+            }
+        });
 
         let (client, notifs) = Client::connect(child).map_err(|e| {
             SymphonyError::CodexClient(format!("connect: {e}"))
@@ -114,7 +122,7 @@ pub async fn run_with_client(
     let thread_id = thread_resp.thread.id.clone();
 
     // 5. Start the turn with the prompt + sandbox override.
-    let mut turn_params = TurnStartParams {
+    let turn_params = TurnStartParams {
         approval_policy: Some(translate_codex_approval_policy(&ctx.policy)),
         approvals_reviewer: None,
         cwd: Some(ctx.workspace.to_string_lossy().to_string()),
@@ -131,8 +139,6 @@ pub async fn run_with_client(
         summary: None,
         thread_id: thread_id.clone(),
     };
-    let _ = &mut turn_params; // suppress unused-mut if reorganized later
-
     let turn_resp = client
         .start_turn(turn_params)
         .await
@@ -298,6 +304,26 @@ pub async fn run_with_client(
         success,
         error: error_msg,
     })
+}
+
+fn toml_basic_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for ch in s.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0c}' => out.push_str("\\f"),
+            ch if ch.is_control() => {
+                out.push_str(&format!("\\u{:04X}", ch as u32));
+            }
+            ch => out.push(ch),
+        }
+    }
+    out
 }
 
 fn item_kind_label(_item: &v2::ThreadItem) -> String {

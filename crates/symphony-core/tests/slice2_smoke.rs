@@ -23,11 +23,19 @@
 #![cfg(feature = "e2e_codex")]
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "manual smoke requiring a real codex CLI and configured linear-clone"]
 async fn slice2_smoke_codex_runs_a_turn() {
-    if std::env::var("CODEX_E2E").is_err() {
-        eprintln!("skipping: set CODEX_E2E=1 to run");
-        return;
-    }
+    assert_eq!(
+        std::env::var("CODEX_E2E").as_deref(),
+        Ok("1"),
+        "set CODEX_E2E=1 when explicitly running this ignored smoke test"
+    );
+    let status = tokio::process::Command::new("codex")
+        .arg("--version")
+        .status()
+        .await
+        .expect("codex CLI must be installed on PATH");
+    assert!(status.success(), "`codex --version` failed");
     eprintln!("Slice 2 smoke is documented as a manual verification gate.");
     eprintln!("Steps:");
     eprintln!("  1. Start linear-clone on :4000 with LINEAR_CLONE_ADMIN_TOKEN=dev-admin.");

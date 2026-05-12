@@ -65,6 +65,7 @@ struct OrchestratorInner {
     event_bus: crate::events::broadcast::OrchestratorEventBus,
     approval_router: ApprovalRouter,
     pr_urls: RwLock<std::collections::HashMap<String, String>>,
+    prior_sessions: RwLock<std::collections::HashMap<String, LiveSession>>,
 }
 
 impl Orchestrator {
@@ -97,6 +98,7 @@ impl Orchestrator {
                 event_bus: crate::events::broadcast::OrchestratorEventBus::new(256),
                 approval_router: ApprovalRouter::new(),
                 pr_urls: RwLock::new(std::collections::HashMap::new()),
+                prior_sessions: RwLock::new(std::collections::HashMap::new()),
             }),
         }
     }
@@ -377,11 +379,13 @@ impl Orchestrator {
         };
 
         {
+            let prior_session = self.inner.prior_sessions.write().await.remove(&issue.id);
             let mut s = self.inner.state.lock().await;
             // Preserve the existing entry (and its accumulated session/tokens)
             // across re-dispatches. A continuation or post-PR follow-up turn
             // shouldn't reset the per-issue token counter — only the issue
-            // pointer and the workspace path need to refresh.
+            // pointer and the workspace path need to refresh. If the previous
+            // dispatch already left the running map, restore its saved session.
             let ws_path = workspace.path.display().to_string();
             s.running
                 .entry(issue.id.clone())
@@ -393,7 +397,7 @@ impl Orchestrator {
                     issue: issue.clone(),
                     started_at: Utc::now(),
                     workspace_path: ws_path,
-                    session: None,
+                    session: prior_session,
                 });
         }
 
@@ -481,14 +485,7 @@ impl Orchestrator {
 
         ws_mgr.after_run(&workspace).await;
 
-        let started_at = {
-            let mut s = self.inner.state.lock().await;
-            s.running.remove(&issue.id).map(|e| e.started_at)
-        };
-        if let Some(start) = started_at {
-            let dur = (Utc::now() - start).num_milliseconds().max(0) as f64 / 1000.0;
-            self.inner.state.lock().await.codex_totals.seconds_running_completed += dur;
-        }
+        let mut preserve_session_for_next_dispatch = false;
 
         if last_outcome_success {
             let mut follow_up: Option<String> = None;
@@ -555,6 +552,7 @@ impl Orchestrator {
                     policy: request.policy.clone(),
                     phase: RunPhase::Implementer,
                 });
+                preserve_session_for_next_dispatch = true;
             } else if request.follow_up_count == 1
                 && matches!(request.phase, RunPhase::Implementer)
                 && cfg.reviewer.enabled
@@ -594,6 +592,7 @@ impl Orchestrator {
                                 policy: cfg.reviewer.effective_policy(),
                                 phase: RunPhase::Reviewer,
                             });
+                            preserve_session_for_next_dispatch = true;
                         }
                         Err(e) => {
                             let _ = self.event_bus().send(
@@ -620,6 +619,7 @@ impl Orchestrator {
                 // workflow asks us to dispatch another turn anyway. Off by
                 // default — believe the agent's TurnCompleted.
                 self.schedule_retry(&issue, 1, CONTINUATION_DELAY_MS, None, request.policy.clone());
+                preserve_session_for_next_dispatch = true;
             }
         } else if matches!(request.phase, RunPhase::Reviewer) {
             // Reviewer turn failed — emit terminal event but do not retry; the issue
@@ -633,6 +633,25 @@ impl Orchestrator {
             );
         } else {
             self.fail_and_schedule_retry(&issue, last_error.unwrap_or_else(|| "unknown".into()), attempt.unwrap_or(0), request.policy.clone());
+            preserve_session_for_next_dispatch = true;
+        }
+
+        let removed_entry = {
+            let mut s = self.inner.state.lock().await;
+            s.running.remove(&issue.id)
+        };
+        if let Some(entry) = removed_entry {
+            let dur = (Utc::now() - entry.started_at).num_milliseconds().max(0) as f64 / 1000.0;
+            self.inner.state.lock().await.codex_totals.seconds_running_completed += dur;
+            if preserve_session_for_next_dispatch {
+                if let Some(session) = entry.session {
+                    self.inner
+                        .prior_sessions
+                        .write()
+                        .await
+                        .insert(issue.id.clone(), session);
+                }
+            }
         }
     }
 

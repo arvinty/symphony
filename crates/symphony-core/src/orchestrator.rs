@@ -30,14 +30,20 @@ struct RetryRequest {
     policy: crate::policy::Policy,
 }
 
-/// One run dispatch, drained by the run-dispatcher task.
 #[derive(Debug, Clone)]
+enum RunPhase {
+    Implementer,
+    Reviewer { pr_url: String },
+}
+
+/// One run dispatch, drained by the run-dispatcher task.
 struct RunRequest {
     issue: Issue,
     attempt: Option<u32>,
     prompt_override: Option<String>,
     follow_up_count: u32,
     policy: crate::policy::Policy,
+    phase: RunPhase,
 }
 
 #[derive(Clone)]
@@ -58,6 +64,7 @@ struct OrchestratorInner {
     retry_rx: Mutex<Option<mpsc::UnboundedReceiver<RetryRequest>>>,
     event_bus: crate::events::broadcast::OrchestratorEventBus,
     approval_router: ApprovalRouter,
+    pr_urls: std::sync::Mutex<std::collections::HashMap<String, String>>,
 }
 
 impl Orchestrator {
@@ -89,6 +96,7 @@ impl Orchestrator {
                 retry_rx: Mutex::new(Some(retry_rx)),
                 event_bus: crate::events::broadcast::OrchestratorEventBus::new(256),
                 approval_router: ApprovalRouter::new(),
+                pr_urls: std::sync::Mutex::new(std::collections::HashMap::new()),
             }),
         }
     }
@@ -137,6 +145,11 @@ impl Orchestrator {
             .unwrap_or_else(|| format!("{}: Symphony changes", identifier));
         let body = format!("Authored by Symphony for {}.", identifier);
         let url = crate::vcs::open_pr(&workspace_path, &title, &body, &branch).await?;
+        self.inner
+            .pr_urls
+            .lock()
+            .unwrap()
+            .insert(issue_id.clone(), url.clone());
         let _ = self.event_bus().send(crate::events::broadcast::OrchestratorEvent::PrOpened {
             issue_id,
             url: url.clone(),
@@ -316,7 +329,7 @@ impl Orchestrator {
             s.retry_attempts.remove(&issue.id);
         }
         let cfg = self.inner.config.read().await.clone();
-        let _ = self.inner.run_tx.send(RunRequest { issue, attempt: None, prompt_override: None, follow_up_count: 0, policy: cfg.policy.clone() });
+        let _ = self.inner.run_tx.send(RunRequest { issue, attempt: None, prompt_override: None, follow_up_count: 0, policy: cfg.policy.clone(), phase: RunPhase::Implementer });
     }
 
     async fn run_worker(&self, request: RunRequest) {
@@ -473,6 +486,11 @@ impl Orchestrator {
                                 let body = format!("Authored by Symphony for {}.", issue.identifier);
                                 match crate::vcs::open_pr(&workspace.path, &title, &body, &branch).await {
                                     Ok(url) => {
+                                        self.inner
+                                            .pr_urls
+                                            .lock()
+                                            .unwrap()
+                                            .insert(issue.id.clone(), url.clone());
                                         let _ = bus.send(crate::events::broadcast::OrchestratorEvent::PrOpened {
                                             issue_id: issue.id.clone(),
                                             url: url.clone(),
@@ -511,6 +529,7 @@ impl Orchestrator {
                     prompt_override: Some(prompt),
                     follow_up_count: 1,
                     policy: request.policy.clone(),
+                    phase: RunPhase::Implementer,
                 });
             } else {
                 self.schedule_retry(&issue, 1, CONTINUATION_DELAY_MS, None, request.policy.clone());
@@ -666,7 +685,7 @@ impl Orchestrator {
                     let mut s = self.inner.state.lock().await;
                     s.retry_attempts.remove(&issue_id);
                 }
-                let _ = self.inner.run_tx.send(RunRequest { issue, attempt: Some(attempt), prompt_override: None, follow_up_count: 0, policy });
+                let _ = self.inner.run_tx.send(RunRequest { issue, attempt: Some(attempt), prompt_override: None, follow_up_count: 0, policy, phase: RunPhase::Implementer });
             }
         }
     }

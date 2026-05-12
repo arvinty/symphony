@@ -6,6 +6,7 @@ license.workspace = true
 
 [features]
 e2e_claude_code = []
+e2e_codex = []
 
 [dev-dependencies]
 tokio = { workspace = true, features = ["full", "test-util"] }

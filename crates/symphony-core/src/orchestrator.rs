@@ -381,7 +381,15 @@ impl Orchestrator {
             );
         }
 
-        let harness: Box<dyn Harness + Send + Sync> = select_harness(&cfg.agent.harness);
+        let harness_name = match &request.phase {
+            RunPhase::Implementer => cfg.agent.harness.clone(),
+            RunPhase::Reviewer { .. } => cfg
+                .reviewer
+                .harness
+                .clone()
+                .unwrap_or_else(|| cfg.agent.harness.clone()),
+        };
+        let harness: Box<dyn Harness + Send + Sync> = select_harness(&harness_name);
         let mut turns = 0u32;
         let mut last_outcome_success = true;
         let mut last_error: Option<String> = None;
@@ -531,9 +539,79 @@ impl Orchestrator {
                     policy: request.policy.clone(),
                     phase: RunPhase::Implementer,
                 });
+            } else if request.follow_up_count == 1
+                && matches!(request.phase, RunPhase::Implementer)
+                && cfg.reviewer.enabled
+            {
+                // Link-PR follow-up succeeded. Dispatch the reviewer.
+                let pr_url = self
+                    .inner
+                    .pr_urls
+                    .lock()
+                    .unwrap()
+                    .get(&issue.id)
+                    .cloned();
+                if let Some(pr_url) = pr_url {
+                    let template = cfg
+                        .reviewer
+                        .prompt_template
+                        .as_deref()
+                        .unwrap_or(crate::reviewer::DEFAULT_REVIEWER_PROMPT);
+                    match crate::reviewer::render_reviewer_prompt(
+                        template,
+                        &issue.identifier,
+                        &issue.title,
+                        &pr_url,
+                    ) {
+                        Ok(prompt) => {
+                            let _ = self.event_bus().send(
+                                crate::events::broadcast::OrchestratorEvent::ReviewerStarted {
+                                    issue_id: issue.id.clone(),
+                                    pr_url: pr_url.clone(),
+                                },
+                            );
+                            let _ = self.inner.run_tx.send(RunRequest {
+                                issue: issue.clone(),
+                                attempt: None,
+                                prompt_override: Some(prompt),
+                                follow_up_count: 0,
+                                policy: cfg.reviewer.effective_policy(),
+                                phase: RunPhase::Reviewer { pr_url },
+                            });
+                        }
+                        Err(e) => {
+                            let _ = self.event_bus().send(
+                                crate::events::broadcast::OrchestratorEvent::ReviewerCompleted {
+                                    issue_id: issue.id.clone(),
+                                    success: false,
+                                    error: Some(format!("prompt_render_failed: {e}")),
+                                },
+                            );
+                        }
+                    }
+                }
+            } else if matches!(request.phase, RunPhase::Reviewer { .. }) {
+                // Reviewer turn succeeded — emit terminal event, no retry/follow-up.
+                let _ = self.event_bus().send(
+                    crate::events::broadcast::OrchestratorEvent::ReviewerCompleted {
+                        issue_id: issue.id.clone(),
+                        success: true,
+                        error: None,
+                    },
+                );
             } else {
                 self.schedule_retry(&issue, 1, CONTINUATION_DELAY_MS, None, request.policy.clone());
             }
+        } else if matches!(request.phase, RunPhase::Reviewer { .. }) {
+            // Reviewer turn failed — emit terminal event but do not retry; the issue
+            // is already on its terminal trajectory from the implementer flow.
+            let _ = self.event_bus().send(
+                crate::events::broadcast::OrchestratorEvent::ReviewerCompleted {
+                    issue_id: issue.id.clone(),
+                    success: false,
+                    error: last_error.clone(),
+                },
+            );
         } else {
             self.fail_and_schedule_retry(&issue, last_error.unwrap_or_else(|| "unknown".into()), attempt.unwrap_or(0), request.policy.clone());
         }

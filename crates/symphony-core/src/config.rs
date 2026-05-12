@@ -152,6 +152,8 @@ pub struct ServiceConfig {
     pub policy: Option<crate::policy::Policy>,
     #[serde(default)]
     pub vcs: Option<VcsConfig>,
+    #[serde(default)]
+    pub reviewer: Option<crate::reviewer::ReviewerConfig>,
 }
 
 #[derive(Debug, Clone)]
@@ -165,6 +167,7 @@ pub struct EffectiveConfig {
     pub server: ServerConfig,
     pub policy: crate::policy::Policy,
     pub vcs: VcsConfig,
+    pub reviewer: crate::reviewer::ReviewerConfig,
 }
 
 impl EffectiveConfig {
@@ -214,6 +217,7 @@ impl EffectiveConfig {
             server: cfg.server.unwrap_or_default(),
             policy: cfg.policy.unwrap_or_default(),
             vcs: cfg.vcs.unwrap_or_default(),
+            reviewer: cfg.reviewer.unwrap_or_default(),
         })
     }
 

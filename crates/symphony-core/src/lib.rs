@@ -11,5 +11,6 @@ pub mod harness;
 pub mod orchestrator;
 pub mod events;
 pub mod state;
+pub mod reviewer;
 pub mod tools;
 pub mod vcs;

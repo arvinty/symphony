@@ -24,7 +24,7 @@ workspace.
 | Harness        | Spawned                                                        | Notes                                                |
 | -------------- | -------------------------------------------------------------- | ---------------------------------------------------- |
 | `claude_code`  | `claude -p <prompt> --output-format stream-json --verbose`     | Uses your existing Claude Code subscription auth.   |
-| `hermes`       | `hermes run --provider anthropic --model <model> --json …`     | Requires Nous Research's Hermes CLI on `$PATH`.     |
+| `hermes`       | `hermes run … --mcp-config <path> --permission-mode <mode>`    | Wires Linear MCP + policy flags. Approval gating is native to Hermes' hosted UI. Requires Nous Research's Hermes CLI on `$PATH`. |
 | `codex`        | `codex app-server --listen stdio -c mcp_servers.linear={…}`    | Full v2 JSON-RPC client; requires `codex-cli >= 0.130`. |
 
 Switch harnesses by editing `WORKFLOW.md` — Symphony hot-reloads the config.

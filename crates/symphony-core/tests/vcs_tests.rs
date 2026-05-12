@@ -1,5 +1,5 @@
 use std::process::Command;
-use symphony_core::vcs::{open_pr, push_branch};
+use symphony_core::vcs::{commit_pending, open_pr, push_branch};
 use tempfile::TempDir;
 
 fn init_workspace_with_remote() -> (TempDir, TempDir) {
@@ -14,6 +14,56 @@ fn init_workspace_with_remote() -> (TempDir, TempDir) {
     Command::new("git").args(["commit", "-qm", "init"]).current_dir(work.path()).status().unwrap();
     Command::new("git").args(["remote", "add", "origin", &remote.path().to_string_lossy()]).current_dir(work.path()).status().unwrap();
     (work, remote)
+}
+
+#[tokio::test]
+async fn commit_pending_returns_none_on_clean_tree() {
+    let work = TempDir::new().unwrap();
+    Command::new("git").args(["init", "-q", "-b", "main"]).current_dir(work.path()).status().unwrap();
+    Command::new("git").args(["config", "user.email", "t@t"]).current_dir(work.path()).status().unwrap();
+    Command::new("git").args(["config", "user.name", "t"]).current_dir(work.path()).status().unwrap();
+    let r = commit_pending(work.path(), "noop").await.unwrap();
+    assert!(r.is_none(), "expected None on clean tree, got {r:?}");
+}
+
+#[tokio::test]
+async fn commit_pending_commits_untracked_files() {
+    let work = TempDir::new().unwrap();
+    Command::new("git").args(["init", "-q", "-b", "main"]).current_dir(work.path()).status().unwrap();
+    Command::new("git").args(["config", "user.email", "t@t"]).current_dir(work.path()).status().unwrap();
+    Command::new("git").args(["config", "user.name", "t"]).current_dir(work.path()).status().unwrap();
+    std::fs::write(work.path().join("a.txt"), "hi").unwrap();
+    let sha = commit_pending(work.path(), "Symphony: DEMO-1").await.unwrap();
+    assert!(sha.is_some(), "expected a SHA, got None");
+    let log = Command::new("git")
+        .args(["log", "--oneline"])
+        .current_dir(work.path())
+        .output()
+        .unwrap();
+    let s = String::from_utf8(log.stdout).unwrap();
+    assert!(s.contains("Symphony: DEMO-1"), "log did not contain message: {s}");
+}
+
+#[tokio::test]
+async fn commit_pending_commits_modified_files() {
+    let work = TempDir::new().unwrap();
+    Command::new("git").args(["init", "-q", "-b", "main"]).current_dir(work.path()).status().unwrap();
+    Command::new("git").args(["config", "user.email", "t@t"]).current_dir(work.path()).status().unwrap();
+    Command::new("git").args(["config", "user.name", "t"]).current_dir(work.path()).status().unwrap();
+    std::fs::write(work.path().join("a.txt"), "v1").unwrap();
+    Command::new("git").args(["add", "-A"]).current_dir(work.path()).status().unwrap();
+    Command::new("git").args(["commit", "-qm", "init"]).current_dir(work.path()).status().unwrap();
+    // Modify and commit_pending.
+    std::fs::write(work.path().join("a.txt"), "v2").unwrap();
+    let sha = commit_pending(work.path(), "Symphony: DEMO-2").await.unwrap();
+    assert!(sha.is_some());
+    let log = Command::new("git")
+        .args(["log", "--oneline"])
+        .current_dir(work.path())
+        .output()
+        .unwrap();
+    let s = String::from_utf8(log.stdout).unwrap();
+    assert_eq!(s.lines().count(), 2, "expected 2 commits, got: {s}");
 }
 
 #[tokio::test]

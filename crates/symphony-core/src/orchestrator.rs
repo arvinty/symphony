@@ -492,10 +492,32 @@ impl Orchestrator {
 
             // VCS pipeline — best-effort, only on first (non-follow-up) run.
             if request.follow_up_count == 0 && matches!(request.phase, RunPhase::Implementer) {
+                // First: catch the common case where the agent wrote files but
+                // skipped the commit step. The slice-1 prompt asks the agent to
+                // commit; in practice harnesses don't always do it. Auto-commit
+                // anything pending so push_branch has something to push.
+                let bus = self.event_bus();
+                let commit_msg = format!("Symphony: {} ({})", issue.title, issue.identifier);
+                match crate::vcs::commit_pending(&workspace.path, &commit_msg).await {
+                    Ok(Some(sha)) => {
+                        let _ = bus.send(crate::events::broadcast::OrchestratorEvent::AutoCommitted {
+                            issue_id: issue.id.clone(),
+                            sha,
+                        });
+                    }
+                    Ok(None) => { /* clean tree — nothing to commit */ }
+                    Err(e) => {
+                        let _ = bus.send(crate::events::broadcast::OrchestratorEvent::VcsError {
+                            issue_id: issue.id.clone(),
+                            stage: "auto_commit".into(),
+                            message: e.to_string(),
+                        });
+                    }
+                }
+
                 if let Some(remote) = cfg.vcs.remote.as_deref() {
                     let prefix = cfg.vcs.branch_prefix.as_deref().unwrap_or("symphony/");
                     let branch = format!("{prefix}{}", issue.identifier);
-                    let bus = self.event_bus();
                     match crate::vcs::push_branch(&workspace.path, remote, &branch).await {
                         Ok(()) => {
                             let _ = bus.send(crate::events::broadcast::OrchestratorEvent::VcsPushed {

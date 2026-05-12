@@ -207,6 +207,7 @@ async fn api_events(
                             | OrchestratorEvent::ToolResult { issue_id, .. }
                             | OrchestratorEvent::ApprovalRequest { issue_id, .. }
                             | OrchestratorEvent::ApprovalDecision { issue_id, .. }
+                            | OrchestratorEvent::AutoCommitted { issue_id, .. }
                             | OrchestratorEvent::VcsPushed { issue_id, .. }
                             | OrchestratorEvent::PrOpened { issue_id, .. }
                             | OrchestratorEvent::VcsError { issue_id, .. }

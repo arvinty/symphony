@@ -378,15 +378,23 @@ impl Orchestrator {
 
         {
             let mut s = self.inner.state.lock().await;
-            s.running.insert(
-                issue.id.clone(),
-                RunningEntry {
+            // Preserve the existing entry (and its accumulated session/tokens)
+            // across re-dispatches. A continuation or post-PR follow-up turn
+            // shouldn't reset the per-issue token counter — only the issue
+            // pointer and the workspace path need to refresh.
+            let ws_path = workspace.path.display().to_string();
+            s.running
+                .entry(issue.id.clone())
+                .and_modify(|e| {
+                    e.issue = issue.clone();
+                    e.workspace_path = ws_path.clone();
+                })
+                .or_insert_with(|| RunningEntry {
                     issue: issue.clone(),
                     started_at: Utc::now(),
-                    workspace_path: workspace.path.display().to_string(),
+                    workspace_path: ws_path,
                     session: None,
-                },
-            );
+                });
         }
 
         let harness_name = match &request.phase {

@@ -1,11 +1,26 @@
 use super::{Harness, HarnessContext, HarnessOutcome};
 use crate::error::{Result, SymphonyError};
 use crate::events::{AgentEvent, AgentEventKind};
+use crate::policy::{PermissionMode, Policy};
 use async_trait::async_trait;
 use chrono::Utc;
 use std::process::Stdio;
 use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
+
+pub fn translate_hermes_policy_args(p: &Policy) -> Vec<String> {
+    let mode = match p.permission_mode {
+        PermissionMode::AcceptEdits => "acceptEdits",
+        PermissionMode::RequireApproval => "default",
+        PermissionMode::ReadOnly => "plan",
+    };
+    let mut args: Vec<String> = vec!["--permission-mode".into(), mode.into()];
+    if !p.allowed_tools.is_empty() {
+        args.push("--allowed-tools".into());
+        args.push(p.allowed_tools.join(","));
+    }
+    args
+}
 
 /// Hermes (Nous Research) agent harness. Spawns `hermes run` (or equivalent CLI form)
 /// pointed at Claude as the model provider.

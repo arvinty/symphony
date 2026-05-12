@@ -2,26 +2,34 @@ use codex_client::dispatcher::Dispatcher;
 use codex_client::protocol::messages::{KnownServerNotification, ServerNotification};
 use codex_client::ClientError;
 use serde_json::json;
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncWriteExt, DuplexStream, ReadHalf, WriteHalf};
 
-fn spawn_pair() -> (Dispatcher, tokio::io::WriteHalf<tokio::io::DuplexStream>) {
+struct SpawnPair {
+    dispatcher: Dispatcher,
+    peer_w: WriteHalf<DuplexStream>,
+    _server_w: WriteHalf<DuplexStream>,
+    _client_r: ReadHalf<DuplexStream>,
+}
+
+fn spawn_pair() -> SpawnPair {
     let (server, client) = tokio::io::duplex(8192);
     // Dispatcher reads from server side. Test writes from client side.
-    let (server_r, _server_w) = tokio::io::split(server);
-    let (_client_r, client_w) = tokio::io::split(client);
-    // Keep `_client_r` alive (drop it manually in tests) so the read half
-    // doesn't EOF prematurely.
-    std::mem::forget(_client_r);
-    std::mem::forget(_server_w);
+    let (server_r, server_w) = tokio::io::split(server);
+    let (client_r, client_w) = tokio::io::split(client);
     let dispatcher = Dispatcher::spawn(server_r);
-    (dispatcher, client_w)
+    SpawnPair {
+        dispatcher,
+        peer_w: client_w,
+        _server_w: server_w,
+        _client_r: client_r,
+    }
 }
 
 #[tokio::test]
 async fn response_resolves_oneshot() {
-    let (dispatcher, mut peer_w) = spawn_pair();
-    let rx = dispatcher.register(json!(1));
-    peer_w
+    let mut pair = spawn_pair();
+    let rx = pair.dispatcher.register(json!(1));
+    pair.peer_w
         .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"ok\":true}}\n")
         .await
         .unwrap();
@@ -31,9 +39,9 @@ async fn response_resolves_oneshot() {
 
 #[tokio::test]
 async fn response_error_resolves_with_jsonrpc_error() {
-    let (dispatcher, mut peer_w) = spawn_pair();
-    let rx = dispatcher.register(json!(2));
-    peer_w
+    let mut pair = spawn_pair();
+    let rx = pair.dispatcher.register(json!(2));
+    pair.peer_w
         .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":2,\"error\":{\"code\":-32602,\"message\":\"bad\"}}\n")
         .await
         .unwrap();
@@ -49,9 +57,9 @@ async fn response_error_resolves_with_jsonrpc_error() {
 
 #[tokio::test]
 async fn notification_routes_to_channel() {
-    let (mut dispatcher, mut peer_w) = spawn_pair();
-    let mut notifs = dispatcher.take_notifications().unwrap();
-    peer_w
+    let mut pair = spawn_pair();
+    let mut notifs = pair.dispatcher.take_notifications().unwrap();
+    pair.peer_w
         .write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"warning\",\"params\":{\"message\":\"hi\"}}\n")
         .await
         .unwrap();
@@ -64,9 +72,9 @@ async fn notification_routes_to_channel() {
 
 #[tokio::test]
 async fn unknown_method_routes_to_unknown() {
-    let (mut dispatcher, mut peer_w) = spawn_pair();
-    let mut notifs = dispatcher.take_notifications().unwrap();
-    peer_w
+    let mut pair = spawn_pair();
+    let mut notifs = pair.dispatcher.take_notifications().unwrap();
+    pair.peer_w
         .write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"future/x\",\"params\":{\"a\":1}}\n")
         .await
         .unwrap();
@@ -82,9 +90,9 @@ async fn unknown_method_routes_to_unknown() {
 
 #[tokio::test]
 async fn malformed_line_does_not_kill_loop() {
-    let (mut dispatcher, mut peer_w) = spawn_pair();
-    let mut notifs = dispatcher.take_notifications().unwrap();
-    peer_w
+    let mut pair = spawn_pair();
+    let mut notifs = pair.dispatcher.take_notifications().unwrap();
+    pair.peer_w
         .write_all(b"not json\n{\"jsonrpc\":\"2.0\",\"method\":\"warning\",\"params\":{\"message\":\"x\"}}\n")
         .await
         .unwrap();

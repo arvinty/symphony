@@ -44,6 +44,15 @@ pub enum OrchestratorEvent {
         stage: String,
         message: String,
     },
+    ReviewerStarted {
+        issue_id: String,
+        pr_url: String,
+    },
+    ReviewerCompleted {
+        issue_id: String,
+        success: bool,
+        error: Option<String>,
+    },
     Resync,
 }
 

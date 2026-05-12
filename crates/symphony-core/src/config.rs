@@ -71,9 +71,18 @@ pub struct AgentConfig {
     pub max_retry_backoff_ms: u64,
     #[serde(default)]
     pub max_concurrent_agents_by_state: HashMap<String, u32>,
-    /// Which harness to use: "claude_code" | "hermes" | "codex" (codex is stub)
+    /// Which harness to use: "claude_code" | "hermes" | "codex"
     #[serde(default = "default_harness")]
     pub harness: String,
+    /// When a turn ends with `TurnCompleted` and no follow-up (no PR pipeline
+    /// to dispatch a link-PR turn, no reviewer dispatch), should the
+    /// orchestrator schedule another continuation run? Default `false` —
+    /// the agent says "done" and we believe it. Set `true` to recover the
+    /// pre-phase-3 behavior where the orchestrator kept re-dispatching the
+    /// same agent on `CONTINUATION_DELAY_MS` until the tracker moved the
+    /// issue terminal.
+    #[serde(default)]
+    pub continue_after_success: bool,
 }
 fn default_max_concurrent() -> u32 {
     10
@@ -204,6 +213,7 @@ impl EffectiveConfig {
                 max_retry_backoff_ms: default_max_retry_backoff(),
                 max_concurrent_agents_by_state: HashMap::new(),
                 harness: default_harness(),
+                continue_after_success: false,
             }),
             codex: cfg.codex.unwrap_or(CodexConfig {
                 command: default_codex_command(),

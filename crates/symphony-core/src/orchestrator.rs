@@ -607,7 +607,10 @@ impl Orchestrator {
                         error: None,
                     },
                 );
-            } else {
+            } else if cfg.agent.continue_after_success {
+                // Configurable continuation: the agent said it's done, but the
+                // workflow asks us to dispatch another turn anyway. Off by
+                // default — believe the agent's TurnCompleted.
                 self.schedule_retry(&issue, 1, CONTINUATION_DELAY_MS, None, request.policy.clone());
             }
         } else if matches!(request.phase, RunPhase::Reviewer) {

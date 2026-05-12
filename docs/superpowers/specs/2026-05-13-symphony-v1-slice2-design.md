@@ -353,3 +353,15 @@ None blocking. Two deferred to implementation:
 
 - **Permissions struct shape.** Final field layout for `v2::Permissions` will come from typify in stage 1. The constructors `Permissions::{read_only, workspace_write, danger_full_access, strict}()` are filled in stage 3 once the shape is concrete.
 - **typify-generated lint suppression.** `build.rs` will emit `#![allow(clippy::all, dead_code)]` at the top of the generated module to keep clippy clean on the workspace.
+
+## Implementation notes (reconciled after build)
+
+Discovered during stage-1 typify codegen and reflected in the merged code:
+
+- **No `Permissions` struct.** v2 splits the field into `approval_policy: Option<AskForApproval>` and `sandbox_policy: Option<SandboxPolicy>` on `turn/start` (and `sandbox: Option<SandboxMode>` on `thread/start`). `translate_codex_permissions` was therefore split into `translate_codex_approval_policy(&Policy) -> AskForApproval` and `translate_codex_sandbox_policy(&Policy) -> SandboxPolicy` (`crates/symphony-core/src/policy.rs`).
+- **`thread/start` is a prerequisite.** `TurnStartParams.thread_id` is required, so the harness now issues `thread/start` between `initialize` and `turn/start` to mint a thread. `Client` grew a `start_thread` method and `ClientRequest` grew a `ThreadStart` variant.
+- **Prompt shape.** `TurnStartParams.input: Vec<UserInput>` (not `prompt: String`). The harness wraps the rendered prompt as `UserInput::Text { text, text_elements: vec![] }`.
+- **`ServerNotification` catch-all.** Serde's `#[serde(other)]` on tagged enums can only attach to unit variants, so the catch-all was inverted: an outer untagged `ServerNotification::{Known, Unknown { method, params }}` with the tag/content enum nested as `KnownServerNotification`. Unknown methods preserve their raw params for forensics.
+- **`select_harness` signature.** Unknown harness names dispatch to a small `UnknownHarness { name }` whose `run()` returns `SymphonyError::UnknownHarness(name)`. Keeps the existing `Box<dyn Harness>` return type intact.
+- **`run_with_client` extraction.** The pump logic in `harness::codex` is exposed as `pub async fn run_with_client(Arc<Client>, NotificationStream, &HarnessContext)` so integration tests can drive it against a `DuplexStream`-backed Client.
+- **Smoke test env var.** Uses `CODEX_E2E=1` plus a new cargo feature `e2e_codex`, mirroring slice 1's `CLAUDE_CODE_E2E` + `e2e_claude_code`. Not `SYMPHONY_E2E` as the original plan said.

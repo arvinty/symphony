@@ -17,7 +17,7 @@ hooks:
   timeout_ms: 30000
 
 agent:
-  harness: claude_code     # or: hermes | codex_stub
+  harness: claude_code     # claude_code | hermes | codex (requires codex-cli >= 0.130)
   max_concurrent_agents: 2
   max_turns: 5
   max_retry_backoff_ms: 60000

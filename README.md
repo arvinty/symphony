@@ -19,15 +19,22 @@ issues.mock.json        Sample tracker payload for the file-mock adapter.
 ## Agent harnesses
 
 Symphony's `agent.harness` config selects which subprocess runs in each per-issue
-workspace. All harnesses use Claude as the model endpoint.
+workspace.
 
 | Harness        | Spawned                                                        | Notes                                                |
 | -------------- | -------------------------------------------------------------- | ---------------------------------------------------- |
 | `claude_code`  | `claude -p <prompt> --output-format stream-json --verbose`     | Uses your existing Claude Code subscription auth.   |
 | `hermes`       | `hermes run --provider anthropic --model <model> --json …`     | Requires Nous Research's Hermes CLI on `$PATH`.     |
-| `codex_stub`   | (no subprocess)                                                | Returns success immediately; useful for plumbing.   |
+| `codex`        | `codex app-server --listen stdio -c mcp_servers.linear={…}`    | Full v2 JSON-RPC client; requires `codex-cli >= 0.130`. |
 
 Switch harnesses by editing `WORKFLOW.md` — Symphony hot-reloads the config.
+
+The Codex harness translates `policy.permission_mode` and `policy.sandbox` to
+the v2 `approvalPolicy` (`AskForApproval::Untrusted` under `require_approval`,
+`Never` otherwise) and `sandboxPolicy` (`DangerFullAccess` / `WorkspaceWrite`
+/ `ReadOnly`). Guardian-denied actions surface on the dashboard via the same
+approval toast as slice 1; allow → `thread/approveGuardianDeniedAction` RPC.
+See `docs/superpowers/specs/2026-05-13-symphony-v1-slice2-design.md`.
 
 ## Running
 
@@ -128,11 +135,10 @@ This is **v0.1**. Implemented:
 - Startup terminal-state workspace cleanup.
 - Dynamic `WORKFLOW.md` reload via filesystem watch.
 - HTTP extension: `GET /`, `GET /api/v1/state`, `GET /api/v1/<id>`, `POST /api/v1/refresh`.
-- Two coding-agent harnesses (Claude Code, Hermes) + Codex stub.
+- Three coding-agent harnesses (Claude Code, Hermes, Codex via the v2 JSON-RPC `codex-client` crate).
 
 Deliberately **not** in v0.1 (would extend scope significantly):
 
-- Full Codex app-server protocol client (replaced by `claude` CLI / `hermes` CLI subprocess harnesses).
 - `linear_graphql` client-side tool extension end-to-end (the trait exists; bridging to subprocess
   harnesses needs harness-specific tool advertisements).
 - Pixel-perfect Linear UI parity (the UI is Linear-styled but not a 1:1 reproduction).

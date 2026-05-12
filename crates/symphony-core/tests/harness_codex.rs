@@ -76,6 +76,108 @@ async fn write_frame<W: tokio::io::AsyncWrite + Unpin>(writer: &mut W, v: Value)
     writer.flush().await.unwrap();
 }
 
+/// Drive a scripted server through initialize → thread/start → turn/start.
+/// Reads three requests and writes three minimal responses against the
+/// supplied half-streams; returns when turn/start is acknowledged.
+async fn handshake<R, W>(reader: &mut BufReader<R>, writer: &mut W)
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    // initialize
+    let req = read_frame(reader).await;
+    assert_eq!(req["method"], "initialize");
+    write_frame(
+        writer,
+        json!({
+            "jsonrpc": "2.0",
+            "id": req["id"],
+            "result": {
+                "protocolVersion": "v1",
+                "serverInfo": {"name": "codex-mock", "version": "0"}
+            }
+        }),
+    )
+    .await;
+
+    // thread/start
+    let req = read_frame(reader).await;
+    assert_eq!(req["method"], "thread/start");
+    write_frame(
+        writer,
+        json!({
+            "jsonrpc": "2.0",
+            "id": req["id"],
+            "result": {
+                "approvalPolicy": "never",
+                "approvalsReviewer": "user",
+                "cwd": "/tmp",
+                "model": "gpt-5",
+                "modelProvider": "openai",
+                "sandbox": {"type": "dangerFullAccess"},
+                "thread": fake_thread("thread-1")
+            }
+        }),
+    )
+    .await;
+
+    // turn/start
+    let req = read_frame(reader).await;
+    assert_eq!(req["method"], "turn/start");
+    write_frame(
+        writer,
+        json!({
+            "jsonrpc": "2.0",
+            "id": req["id"],
+            "result": {"turn": fake_turn("turn-1", "inProgress")}
+        }),
+    )
+    .await;
+}
+
+fn fake_started(review_id: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "method": "item/autoApprovalReview/started",
+        "params": {
+            "action": {"type": "command", "command": "ls", "cwd": "/tmp", "source": "shell"},
+            "review": {"status": "inProgress"},
+            "reviewId": review_id,
+            "startedAtMs": 0_i64,
+            "threadId": "thread-1",
+            "turnId": "turn-1"
+        }
+    })
+}
+
+fn fake_completed(review_id: &str, status: &str) -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "method": "item/autoApprovalReview/completed",
+        "params": {
+            "action": {"type": "command", "command": "ls", "cwd": "/tmp", "source": "shell"},
+            "completedAtMs": 1_i64,
+            "decisionSource": "agent",
+            "review": {"status": status},
+            "reviewId": review_id,
+            "startedAtMs": 0_i64,
+            "threadId": "thread-1",
+            "turnId": "turn-1"
+        }
+    })
+}
+
+fn fake_turn_completed() -> Value {
+    json!({
+        "jsonrpc": "2.0",
+        "method": "turn/completed",
+        "params": {
+            "threadId": "thread-1",
+            "turn": fake_turn("turn-1", "completed")
+        }
+    })
+}
+
 #[tokio::test]
 async fn happy_path_runs_to_completion() {
     let (workflow_path, dir) = write_temp_workflow();
@@ -329,4 +431,227 @@ async fn require_approval_policy_translates_to_untrusted_on_start() {
 
     let policy = captured_policy.get().cloned().unwrap_or_default();
     assert_eq!(policy, "untrusted", "expected untrusted approvalPolicy");
+}
+
+#[tokio::test]
+async fn approved_review_emits_approval_auto_approved() {
+    let (workflow_path, dir) = write_temp_workflow();
+    let wf = load_workflow(&workflow_path).unwrap();
+    let cfg = EffectiveConfig::from_workflow(&wf).unwrap();
+
+    let (server, client) = tokio::io::duplex(16384);
+    let (s_r, s_w) = tokio::io::split(server);
+    let (c_r, c_w) = tokio::io::split(client);
+    let (codex_client, notifs) = Client::from_halves(c_r, c_w);
+    let codex_client = Arc::new(codex_client);
+
+    let server_task = tokio::spawn(async move {
+        let mut reader = BufReader::new(s_r);
+        let mut writer = s_w;
+        handshake(&mut reader, &mut writer).await;
+
+        write_frame(&mut writer, fake_started("rev-1")).await;
+        write_frame(&mut writer, fake_completed("rev-1", "approved")).await;
+        write_frame(&mut writer, fake_turn_completed()).await;
+    });
+
+    let (tx, mut rx) = mpsc::channel(64);
+    let bus = OrchestratorEventBus::new(64);
+    let approval_router = ApprovalRouter::new();
+    let workspace = dir.clone();
+    let ctx = HarnessContext {
+        workspace: &workspace,
+        prompt: "hi",
+        cfg: &cfg,
+        tx,
+        bus,
+        approval_router,
+        policy: Policy::default(),
+        linear_token: None,
+        linear_endpoint: None,
+        issue_id: "X".into(),
+    };
+
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(3),
+        run_with_client(codex_client, notifs, &ctx),
+    )
+    .await
+    .expect("not timed out")
+    .expect("ran");
+    assert!(outcome.success);
+
+    let mut saw_auto_approved = false;
+    while let Ok(Some(ev)) = tokio::time::timeout(Duration::from_millis(50), rx.recv()).await {
+        if ev.kind == AgentEventKind::ApprovalAutoApproved {
+            saw_auto_approved = true;
+        }
+    }
+    assert!(
+        saw_auto_approved,
+        "expected AgentEventKind::ApprovalAutoApproved for an approved review"
+    );
+
+    server_task.await.unwrap();
+}
+
+#[tokio::test]
+async fn denied_review_with_operator_allow_sends_override_rpc() {
+    let (workflow_path, dir) = write_temp_workflow();
+    let wf = load_workflow(&workflow_path).unwrap();
+    let cfg = EffectiveConfig::from_workflow(&wf).unwrap();
+
+    let (server, client) = tokio::io::duplex(16384);
+    let (s_r, s_w) = tokio::io::split(server);
+    let (c_r, c_w) = tokio::io::split(client);
+    let (codex_client, notifs) = Client::from_halves(c_r, c_w);
+    let codex_client = Arc::new(codex_client);
+
+    let captured_method: Arc<tokio::sync::OnceCell<String>> =
+        Arc::new(tokio::sync::OnceCell::new());
+    let captured = Arc::clone(&captured_method);
+
+    let server_task = tokio::spawn(async move {
+        let mut reader = BufReader::new(s_r);
+        let mut writer = s_w;
+        handshake(&mut reader, &mut writer).await;
+
+        write_frame(&mut writer, fake_started("rev-2")).await;
+        write_frame(&mut writer, fake_completed("rev-2", "denied")).await;
+
+        // Wait for the override RPC. The harness emits it after the operator
+        // resolves the approval — we read one more request and capture it.
+        let req = tokio::time::timeout(Duration::from_secs(2), read_frame(&mut reader))
+            .await
+            .expect("override RPC arrived");
+        captured
+            .set(req["method"].as_str().unwrap_or("").to_string())
+            .ok();
+        write_frame(
+            &mut writer,
+            json!({"jsonrpc": "2.0", "id": req["id"], "result": {}}),
+        )
+        .await;
+
+        write_frame(&mut writer, fake_turn_completed()).await;
+    });
+
+    let (tx, _rx) = mpsc::channel(64);
+    let bus = OrchestratorEventBus::new(64);
+    let approval_router = ApprovalRouter::new();
+    let resolver = approval_router.clone();
+    let workspace = dir.clone();
+    let ctx = HarnessContext {
+        workspace: &workspace,
+        prompt: "hi",
+        cfg: &cfg,
+        tx,
+        bus,
+        approval_router,
+        policy: Policy::default(),
+        linear_token: None,
+        linear_endpoint: None,
+        issue_id: "X".into(),
+    };
+
+    // Operator side: after a short delay, allow the approval.
+    let operator = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        resolver.resolve("rev-2", true, None)
+    });
+
+    let outcome = tokio::time::timeout(
+        Duration::from_secs(3),
+        run_with_client(codex_client, notifs, &ctx),
+    )
+    .await
+    .expect("not timed out")
+    .expect("ran");
+    assert!(outcome.success, "outcome failed: {:?}", outcome);
+    let resolved = operator.await.unwrap();
+    assert!(resolved, "approval router should have a waiter for rev-2");
+
+    server_task.await.unwrap();
+    let method = captured_method.get().cloned().unwrap_or_default();
+    assert_eq!(method, "thread/approveGuardianDeniedAction");
+}
+
+#[tokio::test]
+async fn denied_review_with_operator_deny_skips_override_rpc() {
+    let (workflow_path, dir) = write_temp_workflow();
+    let wf = load_workflow(&workflow_path).unwrap();
+    let cfg = EffectiveConfig::from_workflow(&wf).unwrap();
+
+    let (server, client) = tokio::io::duplex(16384);
+    let (s_r, s_w) = tokio::io::split(server);
+    let (c_r, c_w) = tokio::io::split(client);
+    let (codex_client, notifs) = Client::from_halves(c_r, c_w);
+    let codex_client = Arc::new(codex_client);
+
+    let saw_extra_rpc: Arc<tokio::sync::Mutex<bool>> =
+        Arc::new(tokio::sync::Mutex::new(false));
+    let flag = Arc::clone(&saw_extra_rpc);
+
+    let server_task = tokio::spawn(async move {
+        let mut reader = BufReader::new(s_r);
+        let mut writer = s_w;
+        handshake(&mut reader, &mut writer).await;
+
+        write_frame(&mut writer, fake_started("rev-3")).await;
+        write_frame(&mut writer, fake_completed("rev-3", "denied")).await;
+        write_frame(&mut writer, fake_turn_completed()).await;
+
+        // Allow some time for an override RPC. If it lands, set the flag.
+        let mut line = String::new();
+        let read = tokio::time::timeout(
+            Duration::from_millis(400),
+            reader.read_line(&mut line),
+        )
+        .await;
+        if let Ok(Ok(n)) = read {
+            if n > 0 {
+                if let Ok(req) = serde_json::from_str::<Value>(line.trim()) {
+                    if req["method"] == "thread/approveGuardianDeniedAction" {
+                        *flag.lock().await = true;
+                    }
+                }
+            }
+        }
+    });
+
+    let (tx, _rx) = mpsc::channel(64);
+    let bus = OrchestratorEventBus::new(64);
+    let approval_router = ApprovalRouter::new();
+    let resolver = approval_router.clone();
+    let workspace = dir.clone();
+    let ctx = HarnessContext {
+        workspace: &workspace,
+        prompt: "hi",
+        cfg: &cfg,
+        tx,
+        bus,
+        approval_router,
+        policy: Policy::default(),
+        linear_token: None,
+        linear_endpoint: None,
+        issue_id: "X".into(),
+    };
+
+    // Operator denies.
+    let _operator = tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        resolver.resolve("rev-3", false, Some("nope".into()))
+    });
+
+    let _ = tokio::time::timeout(
+        Duration::from_secs(2),
+        run_with_client(codex_client, notifs, &ctx),
+    )
+    .await;
+
+    server_task.await.unwrap();
+    assert!(
+        !*saw_extra_rpc.lock().await,
+        "operator deny should not send thread/approveGuardianDeniedAction"
+    );
 }

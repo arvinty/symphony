@@ -16,6 +16,16 @@ WORKFLOW.md             Sample workflow used by `symphony`.
 issues.mock.json        Sample tracker payload for the file-mock adapter.
 ```
 
+## Reviewer agent (phase 2)
+
+When `reviewer.enabled: true` is set in `WORKFLOW.md`, Symphony runs a
+second agent after the implementer succeeds and the PR is linked back to
+the Linear issue. The reviewer runs with a separate (default ReadOnly+ReadOnly)
+policy, reads the diff, posts a single summary comment via
+`linear_graphql.add_comment`, and ends. Reviewer success is best-effort —
+the issue's terminal state isn't gated on it. See
+`docs/superpowers/specs/2026-05-13-symphony-v1-phase2-slice1-design.md`.
+
 ## Agent harnesses
 
 Symphony's `agent.harness` config selects which subprocess runs in each per-issue

@@ -18,6 +18,7 @@ use tokio_stream::wrappers::BroadcastStream;
 pub async fn serve(orch: Orchestrator, port: u16) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/", get(dashboard))
+        .route("/healthz", get(healthz))
         .route("/api/v1/state", get(api_state))
         .route("/api/v1/refresh", post(api_refresh))
         .route("/api/v1/events", get(api_events))
@@ -30,6 +31,12 @@ pub async fn serve(orch: Orchestrator, port: u16) -> anyhow::Result<()> {
     let listener = tokio::net::TcpListener::bind(addr).await?;
     axum::serve(listener, app.into_make_service()).await?;
     Ok(())
+}
+
+/// Lightweight liveness probe — no state lock, no orchestrator work. Suitable
+/// for a load balancer / container healthcheck that polls frequently.
+async fn healthz() -> impl IntoResponse {
+    Json(json!({ "status": "ok" }))
 }
 
 async fn dashboard(State(orch): State<Orchestrator>) -> impl IntoResponse {

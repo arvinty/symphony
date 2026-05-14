@@ -45,6 +45,13 @@ policy:
   approval_timeout_ms: 300000
 
 vcs:
+  # `remote` is passed straight to `git push -u <remote> HEAD:<branch>`.
+  # The default per-issue workspace is a fresh `git init` (see hooks.after_create)
+  # with NO remotes configured, so a bare name like `origin` will fail with
+  # "'origin' does not appear to be a git repository". Either:
+  #   - set `remote` to a real URL or path (e.g. git@github.com:you/repo.git),
+  #     which `git push` accepts directly, OR
+  #   - extend hooks.after_create to clone the target repo / `git remote add`.
   remote: origin
   branch_prefix: symphony/
   auto_open_pr: false

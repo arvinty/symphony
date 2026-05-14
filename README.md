@@ -90,8 +90,8 @@ docker compose down -v         # stop and discard the DB volume
 ```
 
 The image sets `LINEAR_CLONE_HOST=0.0.0.0` so the port is reachable from the
-host. Only `linear-clone` is containerized — `symphony` shells out to agent
-CLIs and needs host git identity, so it still runs on the host.
+host. Only `linear-clone` is containerized — see below for why `symphony`
+isn't.
 
 Then point Symphony at the clone by editing `WORKFLOW.md`:
 
@@ -102,6 +102,20 @@ tracker:
   api_key: dev-token       # not validated locally
   project_slug: symphony
 ```
+
+### Why `symphony` isn't containerized
+
+This is deliberate, not a gap. The orchestrator shells out to agent CLIs
+(`claude`, `codex`, `hermes`) and `gh`, each authenticated against
+host-resident, per-user credentials — a Claude Code subscription, Codex
+auth, the Hermes hosted UI, a GitHub login. It also relies on the host's
+git identity and writes per-issue workspaces to the host filesystem.
+
+Putting `symphony` in a container wouldn't make it more portable: every one
+of those dependencies would come back as a bind-mount flag, recreating the
+host environment inside the container. A single-operator orchestrator
+belongs on the operator's host. `linear-clone`, by contrast, is a
+self-contained service and *is* containerized (above).
 
 ## v1.0 Slice 1 (Claude Code end-to-end)
 

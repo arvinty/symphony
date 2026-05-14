@@ -1,6 +1,36 @@
+use std::path::Path;
 use std::process::Command;
+use std::sync::Mutex;
 use symphony_core::vcs::{commit_pending, open_pr, push_branch};
 use tempfile::TempDir;
+
+/// Serializes tests that mutate the process-global `PATH`. Cargo runs the
+/// tests in this file concurrently within one process, so two shim-on-PATH
+/// tests could otherwise interleave and resolve `gh` to the wrong shim.
+/// Hold this lock for the whole PATH-sensitive section of such a test.
+static PATH_LOCK: Mutex<()> = Mutex::new(());
+
+/// Prepends a directory to `PATH` and restores the original on drop, so a
+/// shim-on-PATH test leaves the process environment as it found it. Mirrors
+/// the pattern in `hermes_integration.rs`.
+struct PathGuard {
+    original: String,
+}
+
+impl PathGuard {
+    fn prepend(dir: &Path) -> Self {
+        let original = std::env::var("PATH").unwrap_or_default();
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        std::env::set_var("PATH", format!("{}{}{}", dir.display(), sep, original));
+        Self { original }
+    }
+}
+
+impl Drop for PathGuard {
+    fn drop(&mut self) {
+        std::env::set_var("PATH", &self.original);
+    }
+}
 
 fn git(workspace: &std::path::Path, args: &[&str]) {
     let output = Command::new("git")
@@ -109,13 +139,9 @@ async fn open_pr_uses_gh_shim_and_returns_url() {
         p.set_mode(0o755);
         std::fs::set_permissions(&shim, p).unwrap();
     }
-    let path = format!(
-        "{}{}{}",
-        shim_dir.path().display(),
-        if cfg!(windows) { ";" } else { ":" },
-        std::env::var("PATH").unwrap_or_default()
-    );
-    std::env::set_var("PATH", path);
+
+    let _path_lock = PATH_LOCK.lock().unwrap();
+    let _path_guard = PathGuard::prepend(shim_dir.path());
 
     let url = open_pr(work.path(), "feat: x", "body", "symphony/DEMO-1").await.unwrap();
     assert_eq!(url, "https://github.com/o/r/pull/42");
@@ -185,14 +211,9 @@ async fn pipeline_commit_then_push_then_open_pr() {
         p.set_mode(0o755);
         std::fs::set_permissions(&shim, p).unwrap();
     }
-    std::env::set_var(
-        "PATH",
-        format!(
-            "{}:{}",
-            shim_dir.path().display(),
-            std::env::var("PATH").unwrap_or_default()
-        ),
-    );
+
+    let _path_lock = PATH_LOCK.lock().unwrap();
+    let _path_guard = PathGuard::prepend(shim_dir.path());
 
     let url = open_pr(
         work.path(),

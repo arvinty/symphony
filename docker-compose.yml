@@ -1,0 +1,17 @@
+# Local deployment of the linear-clone issue tracker.
+#   docker compose up --build
+# then open http://localhost:4000
+services:
+  linear-clone:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "4000:4000"
+    volumes:
+      # SQLite DB persists across container restarts.
+      - linear-clone-data:/data
+    restart: unless-stopped
+
+volumes:
+  linear-clone-data:

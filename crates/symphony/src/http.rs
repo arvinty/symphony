@@ -211,7 +211,8 @@ async fn api_events(
                             | OrchestratorEvent::PrOpened { issue_id, .. }
                             | OrchestratorEvent::VcsError { issue_id, .. }
                             | OrchestratorEvent::ReviewerStarted { issue_id, .. }
-                            | OrchestratorEvent::ReviewerCompleted { issue_id, .. } => Some(issue_id.clone()),
+                            | OrchestratorEvent::ReviewerCompleted { issue_id, .. }
+                            | OrchestratorEvent::IssueCompleted { issue_id, .. } => Some(issue_id.clone()),
                             OrchestratorEvent::Resync => None,
                         };
                         if !matches!(evt, OrchestratorEvent::Resync) && issue.as_deref() != Some(want.as_str()) {

@@ -301,6 +301,14 @@ impl Orchestrator {
         if state.running.contains_key(&issue.id) || state.claimed.contains(&issue.id) {
             return false;
         }
+        // An issue we've already finished in this orchestrator run stays in
+        // `completed` until the process restarts. The tracker is the source of
+        // truth for whether an issue *should* be re-processed; here we just
+        // prevent the same fresh-Todo issue from getting picked up again on
+        // every poll after we already produced a successful turn for it.
+        if state.completed.contains(&issue.id) {
+            return false;
+        }
         let running_count = state.running.len() as u32;
         if running_count >= cfg.agent.max_concurrent_agents {
             return false;
@@ -486,6 +494,7 @@ impl Orchestrator {
         ws_mgr.after_run(&workspace).await;
 
         let mut preserve_session_for_next_dispatch = false;
+        let mut released_terminally = false;
 
         if last_outcome_success {
             let mut follow_up: Option<String> = None;
@@ -614,12 +623,17 @@ impl Orchestrator {
                         error: None,
                     },
                 );
+                released_terminally = true;
             } else if cfg.agent.continue_after_success {
                 // Configurable continuation: the agent said it's done, but the
                 // workflow asks us to dispatch another turn anyway. Off by
                 // default — believe the agent's TurnCompleted.
                 self.schedule_retry(&issue, 1, CONTINUATION_DELAY_MS, None, request.policy.clone());
                 preserve_session_for_next_dispatch = true;
+            } else {
+                // Success with no follow-up to dispatch and continuation off.
+                // Treat as terminal: don't loop, don't hold the slot.
+                released_terminally = true;
             }
         } else if matches!(request.phase, RunPhase::Reviewer) {
             // Reviewer turn failed — emit terminal event but do not retry; the issue
@@ -631,9 +645,24 @@ impl Orchestrator {
                     error: last_error.clone(),
                 },
             );
+            released_terminally = true;
         } else {
             self.fail_and_schedule_retry(&issue, last_error.unwrap_or_else(|| "unknown".into()), attempt.unwrap_or(0), request.policy.clone());
             preserve_session_for_next_dispatch = true;
+        }
+
+        if released_terminally {
+            let mut s = self.inner.state.lock().await;
+            s.completed.insert(issue.id.clone());
+            s.claimed.remove(&issue.id);
+            s.retry_attempts.remove(&issue.id);
+            drop(s);
+            let _ = self.event_bus().send(
+                crate::events::broadcast::OrchestratorEvent::IssueCompleted {
+                    issue_id: issue.id.clone(),
+                    identifier: issue.identifier.clone(),
+                },
+            );
         }
 
         let removed_entry = {

@@ -53,6 +53,10 @@ pub enum OrchestratorEvent {
         success: bool,
         error: Option<String>,
     },
+    IssueCompleted {
+        issue_id: String,
+        identifier: String,
+    },
     Resync,
 }
 

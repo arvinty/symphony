@@ -78,6 +78,21 @@ cd web && npm run dev   # http://localhost:5173, proxies /graphql + /api to :400
 If `crates/linear-clone/static/` is absent (UI not built), linear-clone
 falls back to a placeholder landing page — the GraphQL API still works.
 
+### 3b. Run the Linear clone in Docker (alternative)
+
+The repo ships a `Dockerfile` + `docker-compose.yml` that build the web UI and
+the `linear-clone` binary and run it with the SQLite DB on a named volume:
+
+```sh
+docker compose up --build      # serves http://localhost:4000
+docker compose down            # stop (DB volume persists)
+docker compose down -v         # stop and discard the DB volume
+```
+
+The image sets `LINEAR_CLONE_HOST=0.0.0.0` so the port is reachable from the
+host. Only `linear-clone` is containerized — `symphony` shells out to agent
+CLIs and needs host git identity, so it still runs on the host.
+
 Then point Symphony at the clone by editing `WORKFLOW.md`:
 
 ```yaml

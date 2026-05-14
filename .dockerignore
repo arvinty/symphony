@@ -1,0 +1,21 @@
+# Build outputs / deps — rebuilt inside the image, huge, cache-busting.
+target
+node_modules
+web/node_modules
+crates/linear-clone/static
+web/dist
+
+# Local data / databases — never bake these into an image.
+data
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# VCS / editor / OS cruft.
+.git
+.gitignore
+.DS_Store
+
+# Docs aren't needed for the build.
+docs

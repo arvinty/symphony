@@ -4,7 +4,9 @@ import react from "@vitejs/plugin-react";
 export default defineConfig({
   plugins: [react()],
   build: {
-    outDir: "dist",
+    // Co-located with the crate that serves it; linear-clone's default
+    // --web-dir points here. Keep this in sync with that default.
+    outDir: "../crates/linear-clone/static",
     emptyOutDir: true,
   },
   server: {

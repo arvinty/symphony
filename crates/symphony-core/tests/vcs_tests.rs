@@ -1,6 +1,36 @@
+use std::path::Path;
 use std::process::Command;
+use std::sync::Mutex;
 use symphony_core::vcs::{commit_pending, open_pr, push_branch};
 use tempfile::TempDir;
+
+/// Serializes tests that mutate the process-global `PATH`. Cargo runs the
+/// tests in this file concurrently within one process, so two shim-on-PATH
+/// tests could otherwise interleave and resolve `gh` to the wrong shim.
+/// Hold this lock for the whole PATH-sensitive section of such a test.
+static PATH_LOCK: Mutex<()> = Mutex::new(());
+
+/// Prepends a directory to `PATH` and restores the original on drop, so a
+/// shim-on-PATH test leaves the process environment as it found it. Mirrors
+/// the pattern in `hermes_integration.rs`.
+struct PathGuard {
+    original: String,
+}
+
+impl PathGuard {
+    fn prepend(dir: &Path) -> Self {
+        let original = std::env::var("PATH").unwrap_or_default();
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        std::env::set_var("PATH", format!("{}{}{}", dir.display(), sep, original));
+        Self { original }
+    }
+}
+
+impl Drop for PathGuard {
+    fn drop(&mut self) {
+        std::env::set_var("PATH", &self.original);
+    }
+}
 
 fn git(workspace: &std::path::Path, args: &[&str]) {
     let output = Command::new("git")
@@ -109,14 +139,89 @@ async fn open_pr_uses_gh_shim_and_returns_url() {
         p.set_mode(0o755);
         std::fs::set_permissions(&shim, p).unwrap();
     }
-    let path = format!(
-        "{}{}{}",
-        shim_dir.path().display(),
-        if cfg!(windows) { ";" } else { ":" },
-        std::env::var("PATH").unwrap_or_default()
-    );
-    std::env::set_var("PATH", path);
+
+    let _path_lock = PATH_LOCK.lock().unwrap();
+    let _path_guard = PathGuard::prepend(shim_dir.path());
 
     let url = open_pr(work.path(), "feat: x", "body", "symphony/DEMO-1").await.unwrap();
     assert_eq!(url, "https://github.com/o/r/pull/42");
+}
+
+/// Exercises the three VCS helpers in the exact order the orchestrator's
+/// post-success branch invokes them: commit_pending → push_branch → open_pr.
+/// Mirrors the real pipeline against a bare-repo remote + a gh shim, and
+/// asserts the agent's *uncommitted* work makes it all the way onto the
+/// remote branch before the PR URL comes back.
+#[cfg(unix)]
+#[tokio::test]
+async fn pipeline_commit_then_push_then_open_pr() {
+    let (work, remote) = init_workspace_with_remote();
+
+    // Simulate an agent that wrote a file but skipped the commit step.
+    std::fs::write(work.path().join("agent_output.txt"), "work product").unwrap();
+
+    // Step 1: commit_pending picks up the agent's stray file.
+    let sha = commit_pending(work.path(), "Symphony: Demo work (DEMO-1)")
+        .await
+        .unwrap();
+    assert!(sha.is_some(), "commit_pending should have produced a commit");
+
+    // Step 2: push the per-issue branch to the remote.
+    push_branch(work.path(), "origin", "symphony/DEMO-1")
+        .await
+        .unwrap();
+    let show_ref = Command::new("git")
+        .args(["--git-dir", &remote.path().to_string_lossy(), "show-ref"])
+        .output()
+        .unwrap();
+    let refs = String::from_utf8(show_ref.stdout).unwrap();
+    assert!(
+        refs.contains("refs/heads/symphony/DEMO-1"),
+        "remote missing branch ref: {refs}"
+    );
+
+    // The commit content must be on the remote — not just an empty branch.
+    let remote_log = Command::new("git")
+        .args([
+            "--git-dir",
+            &remote.path().to_string_lossy(),
+            "log",
+            "--oneline",
+            "symphony/DEMO-1",
+        ])
+        .output()
+        .unwrap();
+    let remote_log = String::from_utf8(remote_log.stdout).unwrap();
+    assert!(
+        remote_log.contains("Symphony: Demo work (DEMO-1)"),
+        "remote branch missing the auto-commit: {remote_log}"
+    );
+
+    // Step 3: open_pr via a gh shim that verifies the head branch.
+    let shim_dir = TempDir::new().unwrap();
+    let shim = shim_dir.path().join("gh");
+    std::fs::write(
+        &shim,
+        "#!/usr/bin/env bash\ncase \" $* \" in *\" --head symphony/DEMO-1 \"*) ;; *) exit 2;; esac\necho '{\"url\":\"https://github.com/o/r/pull/99\"}'\n",
+    )
+    .unwrap();
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mut p = std::fs::metadata(&shim).unwrap().permissions();
+        p.set_mode(0o755);
+        std::fs::set_permissions(&shim, p).unwrap();
+    }
+
+    let _path_lock = PATH_LOCK.lock().unwrap();
+    let _path_guard = PathGuard::prepend(shim_dir.path());
+
+    let url = open_pr(
+        work.path(),
+        "DEMO-1: Demo work",
+        "Authored by Symphony.",
+        "symphony/DEMO-1",
+    )
+    .await
+    .unwrap();
+    assert_eq!(url, "https://github.com/o/r/pull/99");
 }

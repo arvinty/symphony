@@ -15,7 +15,7 @@ struct Cli {
     db: PathBuf,
     #[arg(long, default_value_t = 4000)]
     port: u16,
-    #[arg(long, env = "LINEAR_CLONE_WEB", default_value = "web/dist")]
+    #[arg(long, env = "LINEAR_CLONE_WEB", default_value = "crates/linear-clone/static")]
     web_dir: PathBuf,
 }
 

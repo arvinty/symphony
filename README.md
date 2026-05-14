@@ -66,14 +66,17 @@ JSON state at <http://127.0.0.1:8080/api/v1/state>.
 ### 3. Run the Linear clone (separate terminal)
 
 ```pwsh
-cargo run -p linear-clone -- --port 4000
-cd web
-npm install
-npm run dev   # dev: http://localhost:5173 (proxies /graphql to :4000)
-# or for production:
-npm run build && cd ..
-cargo run -p linear-clone -- --port 4000
+# Build the web UI once — output lands in crates/linear-clone/static/,
+# which is linear-clone's default --web-dir, so it's served automatically.
+cd web && npm install && npm run build && cd ..
+cargo run -p linear-clone -- --port 4000   # serves the built UI at /
+
+# Or, for live frontend development:
+cd web && npm run dev   # http://localhost:5173, proxies /graphql + /api to :4000
 ```
+
+If `crates/linear-clone/static/` is absent (UI not built), linear-clone
+falls back to a placeholder landing page — the GraphQL API still works.
 
 Then point Symphony at the clone by editing `WORKFLOW.md`:
 

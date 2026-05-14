@@ -4,7 +4,6 @@ mod watcher;
 use anyhow::{bail, Result};
 use clap::Parser;
 use std::path::PathBuf;
-use std::sync::Arc;
 use symphony_core::config::EffectiveConfig;
 use symphony_core::orchestrator::{build_tracker, Orchestrator};
 use symphony_core::workflow::load_workflow;
@@ -79,17 +78,44 @@ async fn main() -> Result<()> {
         });
     }
 
-    // Signal handling
+    // Signal handling — graceful shutdown on SIGINT (ctrl-c) *and* SIGTERM.
+    // SIGTERM is what container runtimes / systemd / k8s send on stop; without
+    // it the orchestrator would be hard-killed mid-turn instead of draining.
     let orch_for_signal = orchestrator.clone();
     tokio::spawn(async move {
-        let _ = tokio::signal::ctrl_c().await;
-        tracing::info!("ctrl_c_received");
+        shutdown_signal().await;
         orch_for_signal.shutdown();
     });
 
-    let _ = Arc::<()>::new(());
     orchestrator.run().await;
     Ok(())
+}
+
+/// Resolves when the process receives SIGINT or (on Unix) SIGTERM.
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+
+    #[cfg(unix)]
+    let terminate = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut sig) => {
+                sig.recv().await;
+            }
+            Err(e) => {
+                tracing::warn!("sigterm_handler_install_failed: {e}");
+                std::future::pending::<()>().await;
+            }
+        }
+    };
+    #[cfg(not(unix))]
+    let terminate = std::future::pending::<()>();
+
+    tokio::select! {
+        _ = ctrl_c => tracing::info!("sigint_received"),
+        _ = terminate => tracing::info!("sigterm_received"),
+    }
 }
 
 fn init_tracing(format: &str) {

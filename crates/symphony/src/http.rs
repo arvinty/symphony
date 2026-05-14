@@ -165,8 +165,10 @@ async fn api_issue(
     (StatusCode::NOT_FOUND, Json(json!({ "error": { "code": "issue_not_found", "message": identifier }}))).into_response()
 }
 
-async fn api_refresh(State(_orch): State<Orchestrator>) -> impl IntoResponse {
-    // The poll loop already coalesces ticks; a real impl would poke a notify.
+async fn api_refresh(State(orch): State<Orchestrator>) -> impl IntoResponse {
+    // Poke the poll loop to run a tick now rather than waiting out the
+    // remaining interval. The tick itself runs async; we just enqueue it.
+    orch.request_refresh();
     (StatusCode::ACCEPTED, Json(json!({ "queued": true })))
 }
 

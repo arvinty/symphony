@@ -58,6 +58,9 @@ struct OrchestratorInner {
     workspace: RwLock<WorkspaceManager>,
     state: Mutex<OrchestratorState>,
     shutdown: tokio::sync::Notify,
+    /// Poked by `request_refresh()` to make the poll loop run a tick now
+    /// instead of waiting out the remaining interval.
+    refresh: tokio::sync::Notify,
     run_tx: mpsc::UnboundedSender<RunRequest>,
     run_rx: Mutex<Option<mpsc::UnboundedReceiver<RunRequest>>>,
     retry_tx: mpsc::UnboundedSender<RetryRequest>,
@@ -91,6 +94,7 @@ impl Orchestrator {
                 workspace: RwLock::new(workspace),
                 state: Mutex::new(state),
                 shutdown: tokio::sync::Notify::new(),
+                refresh: tokio::sync::Notify::new(),
                 run_tx,
                 run_rx: Mutex::new(Some(run_rx)),
                 retry_tx,
@@ -175,6 +179,13 @@ impl Orchestrator {
         self.inner.shutdown.notify_waiters();
     }
 
+    /// Requests an immediate poll tick instead of waiting out the current
+    /// interval. `notify_one` stores a permit if the loop isn't parked on
+    /// `.notified()` yet, so a refresh that races the loop isn't dropped.
+    pub fn request_refresh(&self) {
+        self.inner.refresh.notify_one();
+    }
+
     pub async fn reload(&self, workflow: WorkflowDefinition, config: EffectiveConfig) -> Result<()> {
         {
             let mut s = self.inner.state.lock().await;
@@ -248,6 +259,11 @@ impl Orchestrator {
                 _ = self.inner.shutdown.notified() => {
                     tracing::info!("shutdown_received");
                     break;
+                }
+                _ = self.inner.refresh.notified() => {
+                    tracing::info!("refresh_requested");
+                    let this = self.clone();
+                    tokio::spawn(async move { this.tick().await });
                 }
                 _ = tokio::time::sleep(interval) => {
                     let this = self.clone();

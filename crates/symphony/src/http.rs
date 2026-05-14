@@ -15,7 +15,11 @@ use symphony_core::events::broadcast::OrchestratorEvent;
 use symphony_core::orchestrator::Orchestrator;
 use tokio_stream::wrappers::BroadcastStream;
 
-pub async fn serve(orch: Orchestrator, port: u16) -> anyhow::Result<()> {
+pub async fn serve(
+    orch: Orchestrator,
+    port: u16,
+    shutdown: impl std::future::Future<Output = ()> + Send + 'static,
+) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/", get(dashboard))
         .route("/healthz", get(healthz))
@@ -30,7 +34,10 @@ pub async fn serve(orch: Orchestrator, port: u16) -> anyhow::Result<()> {
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     tracing::info!(%addr, "symphony_http_listening");
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app.into_make_service()).await?;
+    axum::serve(listener, app.into_make_service())
+        .with_graceful_shutdown(shutdown)
+        .await?;
+    tracing::info!("symphony_http_shutdown_complete");
     Ok(())
 }
 

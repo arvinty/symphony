@@ -56,12 +56,21 @@ async fn main() -> Result<()> {
     let workspace = WorkspaceManager::new(config.workspace_root.clone(), config.hooks.clone());
     let orchestrator = Orchestrator::new(workflow.clone(), config.clone(), tracker, workspace);
 
+    // Coordinates graceful shutdown: the signal handler flips this, the HTTP
+    // server drains in-flight requests on it, and the orchestrator's own
+    // shutdown() is invoked alongside.
+    let (shutdown_tx, shutdown_rx) = tokio::sync::watch::channel(false);
+
     // HTTP server (optional)
     let port = cli.port.or(config.server.port);
     if let Some(port) = port {
         let orch = orchestrator.clone();
+        let mut shutdown_rx = shutdown_rx;
         tokio::spawn(async move {
-            if let Err(e) = http::serve(orch, port).await {
+            let on_shutdown = async move {
+                let _ = shutdown_rx.changed().await;
+            };
+            if let Err(e) = http::serve(orch, port, on_shutdown).await {
                 tracing::error!("http_server_failed: {e}");
             }
         });
@@ -81,9 +90,11 @@ async fn main() -> Result<()> {
     // Signal handling — graceful shutdown on SIGINT (ctrl-c) *and* SIGTERM.
     // SIGTERM is what container runtimes / systemd / k8s send on stop; without
     // it the orchestrator would be hard-killed mid-turn instead of draining.
+    // The watch send drains the HTTP server; shutdown() stops the poll loop.
     let orch_for_signal = orchestrator.clone();
     tokio::spawn(async move {
         shutdown_signal().await;
+        let _ = shutdown_tx.send(true);
         orch_for_signal.shutdown();
     });
 

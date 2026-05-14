@@ -38,8 +38,20 @@ async fn main() -> Result<()> {
     let cors = CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any);
     let api = build_router(state);
     let app: Router = if cli.web_dir.exists() {
-        let serve = ServeDir::new(&cli.web_dir).append_index_html_on_directories(true);
-        api.fallback_service(serve).layer(cors)
+        // The web UI uses BrowserRouter, so client-side routes (/board,
+        // /issue/ENG-1, …) aren't real files. Built assets all live under
+        // /assets, served by ServeDir (which 404s correctly for a genuinely
+        // missing asset). Every other unmatched path falls back to index.html
+        // with a 200, so a deep-link or refresh boots the app instead of
+        // 404ing. API routes are matched by `api` first, so they're unaffected.
+        let index_html =
+            std::fs::read_to_string(cli.web_dir.join("index.html")).unwrap_or_default();
+        api.nest_service("/assets", ServeDir::new(cli.web_dir.join("assets")))
+            .fallback(move || {
+                let html = index_html.clone();
+                async move { Html(html) }
+            })
+            .layer(cors)
     } else {
         api.fallback(|| async { Html(LANDING) }).layer(cors)
     };

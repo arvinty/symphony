@@ -191,9 +191,18 @@ fn translate_claude_event(v: &serde_json::Value, pid: Option<&str>) -> AgentEven
         _ => AgentEventKind::OtherMessage,
     };
 
+    // Claude Code's stream-json puts cumulative session usage on the top-level
+    // `usage` of the `result` event (assistant events nest per-message usage
+    // under `message.usage`, which we deliberately skip to avoid double-count).
+    // The bare `input_tokens` is only the *uncached* new input — the bulk of a
+    // real turn's token volume lives in `cache_creation_input_tokens` and
+    // `cache_read_input_tokens`. Fold those into the input count so the
+    // reported total reflects what the model actually processed.
     let tokens = v.get("usage").and_then(|u| {
-        let input = u.get("input_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
-        let output = u.get("output_tokens").and_then(|n| n.as_u64()).unwrap_or(0);
+        let get = |k: &str| u.get(k).and_then(|n| n.as_u64()).unwrap_or(0);
+        let input =
+            get("input_tokens") + get("cache_creation_input_tokens") + get("cache_read_input_tokens");
+        let output = get("output_tokens");
         Some(UsageTokens {
             input_tokens: input,
             output_tokens: output,
@@ -229,5 +238,63 @@ fn translate_claude_event(v: &serde_json::Value, pid: Option<&str>) -> AgentEven
         message,
         tokens,
         raw: Some(v.clone()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn result_event_token_count_includes_cache() {
+        // Shape mirrors a real `result` event from `claude -p --output-format
+        // stream-json`: the bare input_tokens is tiny, cache fields carry the
+        // bulk of the volume.
+        let ev = json!({
+            "type": "result",
+            "subtype": "success",
+            "session_id": "s1",
+            "usage": {
+                "input_tokens": 1,
+                "cache_creation_input_tokens": 4036,
+                "cache_read_input_tokens": 9536,
+                "output_tokens": 5
+            }
+        });
+        let translated = translate_claude_event(&ev, None);
+        let tokens = translated.tokens.expect("result event should carry tokens");
+        assert_eq!(tokens.input_tokens, 1 + 4036 + 9536);
+        assert_eq!(tokens.output_tokens, 5);
+        assert_eq!(tokens.total_tokens, 1 + 4036 + 9536 + 5);
+    }
+
+    #[test]
+    fn assistant_event_carries_no_top_level_tokens() {
+        // Assistant events nest usage under message.usage; translate_claude_event
+        // reads only top-level `usage`, so it must not emit tokens here (else
+        // we'd double-count against the cumulative `result` event).
+        let ev = json!({
+            "type": "assistant",
+            "session_id": "s1",
+            "message": {
+                "content": [{"type": "text", "text": "hi"}],
+                "usage": {"input_tokens": 1, "output_tokens": 5}
+            }
+        });
+        let translated = translate_claude_event(&ev, None);
+        assert!(translated.tokens.is_none(), "assistant events must not emit tokens");
+    }
+
+    #[test]
+    fn missing_cache_fields_default_to_zero() {
+        let ev = json!({
+            "type": "result",
+            "subtype": "success",
+            "usage": {"input_tokens": 100, "output_tokens": 50}
+        });
+        let tokens = translate_claude_event(&ev, None).tokens.unwrap();
+        assert_eq!(tokens.input_tokens, 100);
+        assert_eq!(tokens.total_tokens, 150);
     }
 }

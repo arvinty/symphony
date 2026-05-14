@@ -289,55 +289,7 @@ impl Orchestrator {
 
     async fn is_dispatch_eligible(&self, issue: &Issue, cfg: &EffectiveConfig) -> bool {
         let state = self.inner.state.lock().await;
-        if issue.id.is_empty() || issue.identifier.is_empty() || issue.title.is_empty() || issue.state.is_empty() {
-            return false;
-        }
-        let state_lower = issue.state.to_lowercase();
-        let active = cfg.tracker.active_states.iter().any(|s| s.eq_ignore_ascii_case(&issue.state));
-        let terminal = cfg.tracker.terminal_states.iter().any(|s| s.eq_ignore_ascii_case(&issue.state));
-        if !active || terminal {
-            return false;
-        }
-        if state.running.contains_key(&issue.id) || state.claimed.contains(&issue.id) {
-            return false;
-        }
-        // An issue we've already finished in this orchestrator run stays in
-        // `completed` until the process restarts. The tracker is the source of
-        // truth for whether an issue *should* be re-processed; here we just
-        // prevent the same fresh-Todo issue from getting picked up again on
-        // every poll after we already produced a successful turn for it.
-        if state.completed.contains(&issue.id) {
-            return false;
-        }
-        let running_count = state.running.len() as u32;
-        if running_count >= cfg.agent.max_concurrent_agents {
-            return false;
-        }
-        if let Some(per_limit) = cfg.agent.max_concurrent_agents_by_state.get(&state_lower) {
-            let in_state = state
-                .running
-                .values()
-                .filter(|r| r.issue.state.eq_ignore_ascii_case(&issue.state))
-                .count() as u32;
-            if in_state >= *per_limit {
-                return false;
-            }
-        }
-        if state_lower == "todo" {
-            let cfg_terminal_lower: Vec<String> = cfg
-                .tracker
-                .terminal_states
-                .iter()
-                .map(|s| s.to_lowercase())
-                .collect();
-            if issue.blocked_by.iter().any(|b| {
-                let s = b.state.as_deref().unwrap_or("").to_lowercase();
-                !cfg_terminal_lower.contains(&s)
-            }) {
-                return false;
-            }
-        }
-        true
+        issue_dispatch_eligible(&state, cfg, issue)
     }
 
     async fn dispatch(&self, issue: Issue) {
@@ -964,6 +916,78 @@ async fn mint_linear_token(cfg: &EffectiveConfig, issue_id: &str) -> Option<Stri
     }
     let v: serde_json::Value = resp.json().await.ok()?;
     v["token"].as_str().map(str::to_string)
+}
+
+/// Pure dispatch-eligibility predicate, extracted from `Orchestrator::
+/// is_dispatch_eligible` so it can be unit-tested without standing up an
+/// orchestrator. Returns `true` iff `issue` may be claimed for a fresh run
+/// given the current `state` and `cfg`.
+pub fn issue_dispatch_eligible(
+    state: &OrchestratorState,
+    cfg: &EffectiveConfig,
+    issue: &Issue,
+) -> bool {
+    if issue.id.is_empty()
+        || issue.identifier.is_empty()
+        || issue.title.is_empty()
+        || issue.state.is_empty()
+    {
+        return false;
+    }
+    let state_lower = issue.state.to_lowercase();
+    let active = cfg
+        .tracker
+        .active_states
+        .iter()
+        .any(|s| s.eq_ignore_ascii_case(&issue.state));
+    let terminal = cfg
+        .tracker
+        .terminal_states
+        .iter()
+        .any(|s| s.eq_ignore_ascii_case(&issue.state));
+    if !active || terminal {
+        return false;
+    }
+    if state.running.contains_key(&issue.id) || state.claimed.contains(&issue.id) {
+        return false;
+    }
+    // An issue we've already finished in this orchestrator run stays in
+    // `completed` until the process restarts. The tracker is the source of
+    // truth for whether an issue *should* be re-processed; here we just
+    // prevent the same fresh-Todo issue from getting picked up again on
+    // every poll after we already produced a successful turn for it.
+    if state.completed.contains(&issue.id) {
+        return false;
+    }
+    let running_count = state.running.len() as u32;
+    if running_count >= cfg.agent.max_concurrent_agents {
+        return false;
+    }
+    if let Some(per_limit) = cfg.agent.max_concurrent_agents_by_state.get(&state_lower) {
+        let in_state = state
+            .running
+            .values()
+            .filter(|r| r.issue.state.eq_ignore_ascii_case(&issue.state))
+            .count() as u32;
+        if in_state >= *per_limit {
+            return false;
+        }
+    }
+    if state_lower == "todo" {
+        let cfg_terminal_lower: Vec<String> = cfg
+            .tracker
+            .terminal_states
+            .iter()
+            .map(|s| s.to_lowercase())
+            .collect();
+        if issue.blocked_by.iter().any(|b| {
+            let s = b.state.as_deref().unwrap_or("").to_lowercase();
+            !cfg_terminal_lower.contains(&s)
+        }) {
+            return false;
+        }
+    }
+    true
 }
 
 pub fn sort_candidates(mut issues: Vec<Issue>) -> Vec<Issue> {

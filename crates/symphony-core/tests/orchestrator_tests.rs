@@ -1,6 +1,10 @@
 use chrono::{TimeZone, Utc};
+use std::path::PathBuf;
+use symphony_core::config::EffectiveConfig;
 use symphony_core::model::{BlockerRef, Issue};
-use symphony_core::orchestrator::sort_candidates;
+use symphony_core::orchestrator::{issue_dispatch_eligible, sort_candidates};
+use symphony_core::state::{CompletedIssues, OrchestratorState};
+use symphony_core::workflow::load_workflow;
 
 fn iss(id: &str, prio: Option<i32>, year: i32, ident: &str) -> Issue {
     Issue {
@@ -17,6 +21,29 @@ fn iss(id: &str, prio: Option<i32>, year: i32, ident: &str) -> Issue {
         created_at: Some(Utc.with_ymd_and_hms(year, 1, 1, 0, 0, 0).unwrap()),
         updated_at: None,
     }
+}
+
+/// Minimal EffectiveConfig with Todo active / Done terminal, for the
+/// dispatch-eligibility tests.
+fn eligibility_config() -> EffectiveConfig {
+    let dir = std::env::temp_dir().join(format!("symphony_elig_{}", uuid::Uuid::new_v4()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let p: PathBuf = dir.join("WORKFLOW.md");
+    std::fs::write(
+        &p,
+        r#"---
+tracker:
+  kind: file_mock
+  endpoint: ./issues.json
+  active_states: ["Todo"]
+  terminal_states: ["Done"]
+---
+prompt
+"#,
+    )
+    .unwrap();
+    let wf = load_workflow(&p).unwrap();
+    EffectiveConfig::from_workflow(&wf).unwrap()
 }
 
 #[test]
@@ -54,6 +81,94 @@ async fn orchestrator_event_bus_round_trips() {
     bus.send(OrchestratorEvent::Resync).unwrap();
     let got = sub.recv().await.unwrap();
     assert!(matches!(got, OrchestratorEvent::Resync));
+}
+
+#[test]
+fn fresh_todo_issue_is_eligible() {
+    let cfg = eligibility_config();
+    let state = OrchestratorState::default();
+    let i = iss("a", Some(1), 2025, "X-1");
+    assert!(issue_dispatch_eligible(&state, &cfg, &i));
+}
+
+#[test]
+fn completed_issue_is_not_re_eligible() {
+    // Core of phase 3 slice 3: an issue we finished must not be re-claimed on
+    // the next poll. Previously only the IssueCompleted *event* was tested;
+    // this exercises the actual is_dispatch_eligible rejection path.
+    let cfg = eligibility_config();
+    let mut state = OrchestratorState::default();
+    let i = iss("a", Some(1), 2025, "X-1");
+    assert!(issue_dispatch_eligible(&state, &cfg, &i));
+    state.completed.insert(i.id.clone());
+    assert!(
+        !issue_dispatch_eligible(&state, &cfg, &i),
+        "an issue in `completed` must not be eligible for re-dispatch"
+    );
+}
+
+#[test]
+fn running_or_claimed_issue_is_not_eligible() {
+    let cfg = eligibility_config();
+    let i = iss("a", Some(1), 2025, "X-1");
+
+    let mut claimed = OrchestratorState::default();
+    claimed.claimed.insert(i.id.clone());
+    assert!(!issue_dispatch_eligible(&claimed, &cfg, &i));
+}
+
+#[test]
+fn terminal_state_issue_is_not_eligible() {
+    let cfg = eligibility_config();
+    let state = OrchestratorState::default();
+    let mut i = iss("a", Some(1), 2025, "X-1");
+    i.state = "Done".into();
+    assert!(!issue_dispatch_eligible(&state, &cfg, &i));
+}
+
+#[test]
+fn issue_blocked_by_open_dependency_is_not_eligible() {
+    let cfg = eligibility_config();
+    let state = OrchestratorState::default();
+    let mut i = iss("a", Some(1), 2025, "X-1");
+    i.blocked_by.push(BlockerRef {
+        id: None,
+        identifier: None,
+        state: Some("Todo".into()), // not terminal -> still blocking
+    });
+    assert!(!issue_dispatch_eligible(&state, &cfg, &i));
+}
+
+#[test]
+fn completed_issues_set_is_bounded_and_evicts_oldest() {
+    let mut c = CompletedIssues::default();
+    let n = 20_000usize; // well past COMPLETED_CAP
+    for k in 0..n {
+        c.insert(format!("iss-{k}"));
+    }
+    assert!(
+        c.len() < n,
+        "completed set must be bounded, got {} after {n} inserts",
+        c.len()
+    );
+    assert!(
+        !c.contains("iss-0"),
+        "the oldest inserted id should have been evicted"
+    );
+    assert!(
+        c.contains(&format!("iss-{}", n - 1)),
+        "the most recent id must be retained"
+    );
+}
+
+#[test]
+fn completed_issues_insert_is_idempotent() {
+    let mut c = CompletedIssues::default();
+    c.insert("iss-1".into());
+    c.insert("iss-1".into());
+    c.insert("iss-1".into());
+    assert_eq!(c.len(), 1);
+    assert!(c.contains("iss-1"));
 }
 
 #[test]

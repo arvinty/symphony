@@ -31,6 +31,10 @@ pub enum OrchestratorEvent {
         allow: bool,
         reason: Option<String>,
     },
+    AutoCommitted {
+        issue_id: String,
+        sha: String,
+    },
     VcsPushed {
         issue_id: String,
         branch: String,

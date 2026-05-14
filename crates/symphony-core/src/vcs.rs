@@ -2,6 +2,75 @@ use anyhow::{anyhow, Context, Result};
 use std::path::Path;
 use tokio::process::Command;
 
+/// Commit any uncommitted changes in the workspace as a single commit.
+/// Returns `Ok(Some(sha))` with the new commit's short SHA on success,
+/// `Ok(None)` if the working tree was already clean, or `Err` on failure.
+///
+/// Useful as a defensive "make sure the agent's work is committed" step
+/// before pushing — agents sometimes modify files but skip the commit step
+/// (the prompt asks, but doesn't always get followed).
+pub async fn commit_pending(workspace: &Path, message: &str) -> Result<Option<String>> {
+    // Check if there's anything to commit.
+    let status = Command::new("git")
+        .args(["status", "--porcelain"])
+        .current_dir(workspace)
+        .output()
+        .await
+        .context("spawning git status")?;
+    if !status.status.success() {
+        return Err(anyhow!(
+            "git status failed: {}",
+            String::from_utf8_lossy(&status.stderr)
+        ));
+    }
+    if status.stdout.iter().all(|b| b.is_ascii_whitespace()) {
+        return Ok(None);
+    }
+
+    // Stage everything.
+    let add = Command::new("git")
+        .args(["add", "-A"])
+        .current_dir(workspace)
+        .output()
+        .await
+        .context("spawning git add")?;
+    if !add.status.success() {
+        return Err(anyhow!(
+            "git add failed: {}",
+            String::from_utf8_lossy(&add.stderr)
+        ));
+    }
+
+    // Commit. Use --allow-empty-message=false implicitly; pass message via -m.
+    let commit = Command::new("git")
+        .args(["commit", "-m", message])
+        .current_dir(workspace)
+        .output()
+        .await
+        .context("spawning git commit")?;
+    if !commit.status.success() {
+        return Err(anyhow!(
+            "git commit failed: {}",
+            String::from_utf8_lossy(&commit.stderr)
+        ));
+    }
+
+    // Capture the short SHA.
+    let rev = Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(workspace)
+        .output()
+        .await
+        .context("spawning git rev-parse")?;
+    if !rev.status.success() {
+        return Err(anyhow!(
+            "git rev-parse failed: {}",
+            String::from_utf8_lossy(&rev.stderr)
+        ));
+    }
+    Ok(Some(String::from_utf8_lossy(&rev.stdout).trim().to_string()))
+}
+
 pub async fn push_branch(workspace: &Path, remote: &str, branch: &str) -> Result<()> {
     let out = Command::new("git")
         .args(["push", "-u", remote, &format!("HEAD:refs/heads/{branch}")])

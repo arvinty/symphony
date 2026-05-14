@@ -528,52 +528,52 @@ impl Orchestrator {
 
                 if auto_commit_ok {
                     if let Some(remote) = cfg.vcs.remote.as_deref() {
-                    let prefix = cfg.vcs.branch_prefix.as_deref().unwrap_or("symphony/");
-                    let branch = format!("{prefix}{}", issue.identifier);
-                    match crate::vcs::push_branch(&workspace.path, remote, &branch).await {
-                        Ok(()) => {
-                            let _ = bus.send(crate::events::broadcast::OrchestratorEvent::VcsPushed {
-                                issue_id: issue.id.clone(),
-                                branch: branch.clone(),
-                            });
-                            if cfg.vcs.auto_open_pr {
-                                let title = format!("{}: {}", issue.identifier, issue.title);
-                                let body = format!("Authored by Symphony for {}.", issue.identifier);
-                                match crate::vcs::open_pr(&workspace.path, &title, &body, &branch).await {
-                                    Ok(url) => {
-                                        self.inner
-                                            .pr_urls
-                                            .write()
-                                            .await
-                                            .insert(issue.id.clone(), url.clone());
-                                        let _ = bus.send(crate::events::broadcast::OrchestratorEvent::PrOpened {
-                                            issue_id: issue.id.clone(),
-                                            url: url.clone(),
-                                        });
-                                        follow_up = Some(format!(
-                                            "PR opened at {url}. Call `linear_graphql.link_pull_request` with issue_id `{}`, that URL, and a short title to attach it to {}. Then end the turn.",
-                                            issue.id,
-                                            issue.identifier
-                                        ));
-                                    }
-                                    Err(e) => {
-                                        let _ = bus.send(crate::events::broadcast::OrchestratorEvent::VcsError {
-                                            issue_id: issue.id.clone(),
-                                            stage: "open_pr".into(),
-                                            message: e.to_string(),
-                                        });
+                        let prefix = cfg.vcs.branch_prefix.as_deref().unwrap_or("symphony/");
+                        let branch = format!("{prefix}{}", issue.identifier);
+                        match crate::vcs::push_branch(&workspace.path, remote, &branch).await {
+                            Ok(()) => {
+                                let _ = bus.send(crate::events::broadcast::OrchestratorEvent::VcsPushed {
+                                    issue_id: issue.id.clone(),
+                                    branch: branch.clone(),
+                                });
+                                if cfg.vcs.auto_open_pr {
+                                    let title = format!("{}: {}", issue.identifier, issue.title);
+                                    let body = format!("Authored by Symphony for {}.", issue.identifier);
+                                    match crate::vcs::open_pr(&workspace.path, &title, &body, &branch).await {
+                                        Ok(url) => {
+                                            self.inner
+                                                .pr_urls
+                                                .write()
+                                                .await
+                                                .insert(issue.id.clone(), url.clone());
+                                            let _ = bus.send(crate::events::broadcast::OrchestratorEvent::PrOpened {
+                                                issue_id: issue.id.clone(),
+                                                url: url.clone(),
+                                            });
+                                            follow_up = Some(format!(
+                                                "PR opened at {url}. Call `linear_graphql.link_pull_request` with issue_id `{}`, that URL, and a short title to attach it to {}. Then end the turn.",
+                                                issue.id,
+                                                issue.identifier
+                                            ));
+                                        }
+                                        Err(e) => {
+                                            let _ = bus.send(crate::events::broadcast::OrchestratorEvent::VcsError {
+                                                issue_id: issue.id.clone(),
+                                                stage: "open_pr".into(),
+                                                message: e.to_string(),
+                                            });
+                                        }
                                     }
                                 }
                             }
+                            Err(e) => {
+                                let _ = bus.send(crate::events::broadcast::OrchestratorEvent::VcsError {
+                                    issue_id: issue.id.clone(),
+                                    stage: "push".into(),
+                                    message: e.to_string(),
+                                });
+                            }
                         }
-                        Err(e) => {
-                            let _ = bus.send(crate::events::broadcast::OrchestratorEvent::VcsError {
-                                issue_id: issue.id.clone(),
-                                stage: "push".into(),
-                                message: e.to_string(),
-                            });
-                        }
-                    }
                     }
                 }
             }

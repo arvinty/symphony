@@ -147,7 +147,7 @@ This is **v0.1**. Implemented:
 - Reconciliation: stall detection (event-inactivity) + tracker state refresh.
 - Startup terminal-state workspace cleanup.
 - Dynamic `WORKFLOW.md` reload via filesystem watch.
-- HTTP extension: `GET /`, `GET /api/v1/state`, `GET /api/v1/<id>`, `POST /api/v1/refresh`.
+- HTTP extension: `GET /`, `GET /healthz`, `GET /metrics` (Prometheus), `GET /api/v1/state`, `GET /api/v1/<id>`, `POST /api/v1/refresh`.
 - Three coding-agent harnesses (Claude Code, Hermes, Codex via the v2 JSON-RPC `codex-client` crate).
 
 Deliberately **not** in v0.1 (would extend scope significantly):

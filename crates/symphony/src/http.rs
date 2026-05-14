@@ -19,6 +19,7 @@ pub async fn serve(orch: Orchestrator, port: u16) -> anyhow::Result<()> {
     let app = Router::new()
         .route("/", get(dashboard))
         .route("/healthz", get(healthz))
+        .route("/metrics", get(metrics))
         .route("/api/v1/state", get(api_state))
         .route("/api/v1/refresh", post(api_refresh))
         .route("/api/v1/events", get(api_events))
@@ -37,6 +38,54 @@ pub async fn serve(orch: Orchestrator, port: u16) -> anyhow::Result<()> {
 /// for a load balancer / container healthcheck that polls frequently.
 async fn healthz() -> impl IntoResponse {
     Json(json!({ "status": "ok" }))
+}
+
+/// Prometheus text exposition (format version 0.0.4) of orchestrator state.
+/// Hand-rolled rather than pulling in a metrics framework: the series set is
+/// small and fixed, and every value comes from a single `snapshot()`. No
+/// per-issue labels — issue ids are unbounded cardinality.
+async fn metrics(State(orch): State<Orchestrator>) -> impl IntoResponse {
+    let s = orch.snapshot().await;
+    let uptime = s
+        .started_at
+        .map(|t| ((Utc::now() - t).num_milliseconds().max(0) as f64) / 1000.0)
+        .unwrap_or(0.0);
+
+    let mut body = String::new();
+    push_metric(&mut body, "symphony_running_agents", "gauge", "Agents currently running.", &s.running.len().to_string());
+    push_metric(&mut body, "symphony_claimed_issues", "gauge", "Issues claimed but not yet running.", &s.claimed.len().to_string());
+    push_metric(&mut body, "symphony_retrying_issues", "gauge", "Issues waiting for a backoff retry.", &s.retry_attempts.len().to_string());
+    push_metric(&mut body, "symphony_completed_issues", "gauge", "Completed issue ids remembered this run (capped).", &s.completed.len().to_string());
+    push_metric(&mut body, "symphony_max_concurrent_agents", "gauge", "Configured max concurrent agents.", &s.max_concurrent_agents.to_string());
+    push_metric(&mut body, "symphony_poll_interval_ms", "gauge", "Configured poll interval in milliseconds.", &s.poll_interval_ms.to_string());
+    push_metric(&mut body, "symphony_uptime_seconds", "gauge", "Seconds since the orchestrator started.", &format!("{uptime:.0}"));
+    push_metric(&mut body, "symphony_tokens_input_total", "counter", "Cumulative agent input tokens.", &s.codex_totals.input_tokens.to_string());
+    push_metric(&mut body, "symphony_tokens_output_total", "counter", "Cumulative agent output tokens.", &s.codex_totals.output_tokens.to_string());
+    push_metric(&mut body, "symphony_tokens_total", "counter", "Cumulative agent total tokens.", &s.codex_totals.total_tokens.to_string());
+    push_metric(&mut body, "symphony_agent_seconds_total", "counter", "Cumulative seconds of completed agent sessions.", &format!("{:.3}", s.codex_totals.seconds_running_completed));
+
+    (
+        StatusCode::OK,
+        [("content-type", "text/plain; version=0.0.4; charset=utf-8")],
+        body,
+    )
+}
+
+/// Appends one Prometheus series (HELP + TYPE + sample) to `body`.
+fn push_metric(body: &mut String, name: &str, kind: &str, help: &str, value: &str) {
+    body.push_str("# HELP ");
+    body.push_str(name);
+    body.push(' ');
+    body.push_str(help);
+    body.push_str("\n# TYPE ");
+    body.push_str(name);
+    body.push(' ');
+    body.push_str(kind);
+    body.push('\n');
+    body.push_str(name);
+    body.push(' ');
+    body.push_str(value);
+    body.push('\n');
 }
 
 async fn dashboard(State(orch): State<Orchestrator>) -> impl IntoResponse {
@@ -240,4 +289,27 @@ async fn api_events(
         }
     });
     Sse::new(stream).keep_alive(KeepAlive::default())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::push_metric;
+
+    #[test]
+    fn push_metric_emits_help_type_sample_in_order() {
+        let mut body = String::new();
+        push_metric(&mut body, "symphony_test", "gauge", "A test metric.", "42");
+        assert_eq!(
+            body,
+            "# HELP symphony_test A test metric.\n# TYPE symphony_test gauge\nsymphony_test 42\n"
+        );
+    }
+
+    #[test]
+    fn push_metric_appends_without_clobbering() {
+        let mut body = String::from("existing 1\n");
+        push_metric(&mut body, "m", "counter", "h", "1");
+        assert!(body.starts_with("existing 1\n"));
+        assert!(body.ends_with("\nm 1\n"));
+    }
 }

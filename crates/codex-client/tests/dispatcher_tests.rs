@@ -42,7 +42,9 @@ async fn response_error_resolves_with_jsonrpc_error() {
     let mut pair = spawn_pair();
     let rx = pair.dispatcher.register(json!(2));
     pair.peer_w
-        .write_all(b"{\"jsonrpc\":\"2.0\",\"id\":2,\"error\":{\"code\":-32602,\"message\":\"bad\"}}\n")
+        .write_all(
+            b"{\"jsonrpc\":\"2.0\",\"id\":2,\"error\":{\"code\":-32602,\"message\":\"bad\"}}\n",
+        )
         .await
         .unwrap();
     let err = rx.await.unwrap().unwrap_err();
@@ -60,7 +62,9 @@ async fn notification_routes_to_channel() {
     let mut pair = spawn_pair();
     let mut notifs = pair.dispatcher.take_notifications().unwrap();
     pair.peer_w
-        .write_all(b"{\"jsonrpc\":\"2.0\",\"method\":\"warning\",\"params\":{\"message\":\"hi\"}}\n")
+        .write_all(
+            b"{\"jsonrpc\":\"2.0\",\"method\":\"warning\",\"params\":{\"message\":\"hi\"}}\n",
+        )
         .await
         .unwrap();
     let n = notifs.recv().await.unwrap();

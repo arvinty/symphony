@@ -68,7 +68,9 @@ pub async fn commit_pending(workspace: &Path, message: &str) -> Result<Option<St
             String::from_utf8_lossy(&rev.stderr)
         ));
     }
-    Ok(Some(String::from_utf8_lossy(&rev.stdout).trim().to_string()))
+    Ok(Some(
+        String::from_utf8_lossy(&rev.stdout).trim().to_string(),
+    ))
 }
 
 pub async fn push_branch(workspace: &Path, remote: &str, branch: &str) -> Result<()> {
@@ -79,7 +81,10 @@ pub async fn push_branch(workspace: &Path, remote: &str, branch: &str) -> Result
         .await
         .context("spawning git push")?;
     if !out.status.success() {
-        return Err(anyhow!("git push failed: {}", String::from_utf8_lossy(&out.stderr)));
+        return Err(anyhow!(
+            "git push failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
     }
     Ok(())
 }
@@ -92,20 +97,8 @@ pub async fn open_pr(workspace: &Path, title: &str, body: &str, head: &str) -> R
     let out = {
         Command::new("cmd")
             .args([
-                "/c",
-                "gh",
-                "pr",
-                "create",
-                "--title",
-                title,
-                "--body",
-                body,
-                "--head",
-                head,
-                "--json",
-                "url",
-                "-q",
-                ".url",
+                "/c", "gh", "pr", "create", "--title", title, "--body", body, "--head", head,
+                "--json", "url", "-q", ".url",
             ])
             .current_dir(workspace)
             .output()
@@ -125,7 +118,10 @@ pub async fn open_pr(workspace: &Path, title: &str, body: &str, head: &str) -> R
         .context("spawning gh")?;
 
     if !out.status.success() {
-        return Err(anyhow!("gh pr create failed: {}", String::from_utf8_lossy(&out.stderr)));
+        return Err(anyhow!(
+            "gh pr create failed: {}",
+            String::from_utf8_lossy(&out.stderr)
+        ));
     }
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if let Ok(v) = serde_json::from_str::<serde_json::Value>(&s) {

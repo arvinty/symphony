@@ -74,7 +74,10 @@ impl OrchestratorEventBus {
         let (tx, _) = broadcast::channel(capacity);
         Self { tx }
     }
-    pub fn send(&self, e: OrchestratorEvent) -> Result<usize, broadcast::error::SendError<OrchestratorEvent>> {
+    pub fn send(
+        &self,
+        e: OrchestratorEvent,
+    ) -> Result<usize, broadcast::error::SendError<OrchestratorEvent>> {
         self.tx.send(e)
     }
     pub fn subscribe(&self) -> broadcast::Receiver<OrchestratorEvent> {

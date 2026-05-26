@@ -13,7 +13,10 @@ fn policy(mode: PermissionMode, sandbox: SandboxProfile) -> Policy {
 
 #[test]
 fn require_approval_routes_through_guardian_via_untrusted() {
-    let p = policy(PermissionMode::RequireApproval, SandboxProfile::WorkspaceWrite);
+    let p = policy(
+        PermissionMode::RequireApproval,
+        SandboxProfile::WorkspaceWrite,
+    );
     assert!(matches!(
         translate_codex_approval_policy(&p),
         AskForApproval::Untrusted
@@ -38,7 +41,9 @@ fn read_only_mode_never_asks_but_locks_sandbox() {
     ));
     assert!(matches!(
         translate_codex_sandbox_policy(&p),
-        SandboxPolicy::ReadOnly { network_access: false }
+        SandboxPolicy::ReadOnly {
+            network_access: false
+        }
     ));
 }
 
@@ -80,7 +85,9 @@ fn require_approval_forces_read_only_sandbox_regardless_of_profile() {
         let p = policy(PermissionMode::RequireApproval, sandbox);
         assert!(matches!(
             translate_codex_sandbox_policy(&p),
-            SandboxPolicy::ReadOnly { network_access: false }
+            SandboxPolicy::ReadOnly {
+                network_access: false
+            }
         ));
     }
 }

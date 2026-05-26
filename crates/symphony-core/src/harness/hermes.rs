@@ -55,7 +55,9 @@ impl Harness for HermesHarness {
             .arg("--provider")
             .arg("anthropic")
             .arg("--model")
-            .arg(std::env::var("SYMPHONY_CLAUDE_MODEL").unwrap_or_else(|_| "claude-opus-4-7".into()))
+            .arg(
+                std::env::var("SYMPHONY_CLAUDE_MODEL").unwrap_or_else(|_| "claude-opus-4-7".into()),
+            )
             .arg("--json")
             .arg("--workdir")
             .arg(workspace)
@@ -67,7 +69,8 @@ impl Harness for HermesHarness {
         }
 
         if let (Some(token), Some(endpoint)) = (linear_token.as_ref(), linear_endpoint.as_ref()) {
-            let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("symphony"));
+            let exe =
+                std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("symphony"));
             let mcp_json = crate::harness::mcp_bridge::generate_mcp_config_json(&exe, &issue_id);
             let mcp_path = workspace.join(".symphony-mcp.json");
             std::fs::write(&mcp_path, mcp_json).ok();
@@ -121,7 +124,10 @@ impl Harness for HermesHarness {
                                         .and_then(|s| s.as_str())
                                         .unwrap_or("")
                                         .to_string();
-                                    let input = block.get("input").cloned().unwrap_or(serde_json::json!({}));
+                                    let input = block
+                                        .get("input")
+                                        .cloned()
+                                        .unwrap_or(serde_json::json!({}));
                                     let _ = bus_clone.send(
                                         crate::events::broadcast::OrchestratorEvent::ToolCall {
                                             issue_id: issue_id_clone.clone(),
@@ -171,8 +177,14 @@ impl Harness for HermesHarness {
 
 fn translate_hermes_event(v: &serde_json::Value, pid: Option<&str>) -> AgentEvent {
     let ty = v.get("type").and_then(|s| s.as_str()).unwrap_or("");
-    let session_id = v.get("session_id").and_then(|s| s.as_str()).map(str::to_string);
-    let turn_id = v.get("turn_id").and_then(|s| s.as_str()).map(str::to_string);
+    let session_id = v
+        .get("session_id")
+        .and_then(|s| s.as_str())
+        .map(str::to_string);
+    let turn_id = v
+        .get("turn_id")
+        .and_then(|s| s.as_str())
+        .map(str::to_string);
     let kind = match ty {
         "system" if v.get("subtype").and_then(|s| s.as_str()) == Some("init") => {
             AgentEventKind::SessionStarted
@@ -212,9 +224,7 @@ fn extract_message_text(v: &serde_json::Value) -> Option<String> {
             }
         }
     }
-    v.get("result")
-        .and_then(|r| r.as_str())
-        .map(str::to_string)
+    v.get("result").and_then(|r| r.as_str()).map(str::to_string)
 }
 
 #[cfg(test)]

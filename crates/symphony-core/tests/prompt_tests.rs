@@ -25,7 +25,12 @@ fn issue() -> Issue {
 
 #[test]
 fn renders_basic_template() {
-    let out = render_prompt("Issue {{ issue.identifier }}: {{ issue.title }}", &issue(), None).unwrap();
+    let out = render_prompt(
+        "Issue {{ issue.identifier }}: {{ issue.title }}",
+        &issue(),
+        None,
+    )
+    .unwrap();
     assert_eq!(out, "Issue ABC-1: Do the thing");
 }
 

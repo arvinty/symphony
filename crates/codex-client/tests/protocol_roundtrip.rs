@@ -51,7 +51,10 @@ fn jsonrpc_message_decodes_response_error() {
     });
     let msg: JsonRpcMessage = serde_json::from_value(raw).unwrap();
     match msg {
-        JsonRpcMessage::Response { result: JsonRpcResult::Err(JsonRpcError { code, message, .. }), .. } => {
+        JsonRpcMessage::Response {
+            result: JsonRpcResult::Err(JsonRpcError { code, message, .. }),
+            ..
+        } => {
             assert_eq!(code, -32602);
             assert_eq!(message, "bad params");
         }
@@ -107,7 +110,9 @@ fn server_notification_decodes_known_methods() {
     assert!(
         matches!(
             n,
-            ServerNotification::Known(codex_client::protocol::messages::KnownServerNotification::Warning(_))
+            ServerNotification::Known(
+                codex_client::protocol::messages::KnownServerNotification::Warning(_)
+            )
         ),
         "expected Known(Warning), got {n:?}"
     );

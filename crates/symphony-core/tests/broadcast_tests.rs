@@ -14,6 +14,8 @@ async fn approval_request_round_trips_through_bus() {
     bus.send(evt.clone()).unwrap();
 
     let got = sub.recv().await.unwrap();
-    assert_eq!(serde_json::to_value(&got).unwrap(),
-               serde_json::to_value(&evt).unwrap());
+    assert_eq!(
+        serde_json::to_value(&got).unwrap(),
+        serde_json::to_value(&evt).unwrap()
+    );
 }

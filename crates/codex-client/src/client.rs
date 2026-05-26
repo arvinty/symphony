@@ -63,8 +63,10 @@ impl Client {
         let id_value: RequestId = json!(id);
 
         // Serialize the typed request, then overlay JSON-RPC envelope fields.
-        let mut payload = serde_json::to_value(&req)
-            .map_err(|e| ClientError::Decode { role: "send", source: e })?;
+        let mut payload = serde_json::to_value(&req).map_err(|e| ClientError::Decode {
+            role: "send",
+            source: e,
+        })?;
         payload["jsonrpc"] = json!("2.0");
         payload["id"] = id_value.clone();
 
@@ -73,8 +75,10 @@ impl Client {
 
         {
             let mut w = self.writer.lock().await;
-            let s = serde_json::to_string(&payload)
-                .map_err(|e| ClientError::Decode { role: "send", source: e })?;
+            let s = serde_json::to_string(&payload).map_err(|e| ClientError::Decode {
+                role: "send",
+                source: e,
+            })?;
             w.write_all(s.as_bytes()).await?;
             w.write_all(b"\n").await?;
             w.flush().await?;

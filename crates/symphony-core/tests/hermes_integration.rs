@@ -78,7 +78,8 @@ async fn hermes_passes_policy_flags_and_surfaces_tool_use() {
     let wf = load_workflow(&workflow_path).unwrap();
     let cfg = EffectiveConfig::from_workflow(&wf).unwrap();
 
-    let bin_dir = std::env::temp_dir().join(format!("symphony_hermes_bin_{}", uuid::Uuid::new_v4()));
+    let bin_dir =
+        std::env::temp_dir().join(format!("symphony_hermes_bin_{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&bin_dir).unwrap();
     let argv_log = bin_dir.join("argv.txt");
     install_hermes_shim(&bin_dir, &argv_log);
@@ -104,25 +105,29 @@ async fn hermes_passes_policy_flags_and_surfaces_tool_use() {
         issue_id: "DEMO-1".into(),
     };
 
-    let outcome = tokio::time::timeout(
-        Duration::from_secs(5),
-        HermesHarness::default().run(ctx),
-    )
-    .await
-    .expect("did not time out")
-    .expect("ran");
+    let outcome = tokio::time::timeout(Duration::from_secs(5), HermesHarness::default().run(ctx))
+        .await
+        .expect("did not time out")
+        .expect("ran");
 
     assert!(outcome.success, "outcome: {outcome:?}");
 
     let argv = std::fs::read_to_string(&argv_log).unwrap_or_default();
-    assert!(argv.contains("--permission-mode"), "argv missing --permission-mode: {argv}");
-    assert!(argv.contains("acceptEdits"), "argv missing acceptEdits: {argv}");
-    assert!(argv.contains("--mcp-config"), "argv missing --mcp-config: {argv}");
+    assert!(
+        argv.contains("--permission-mode"),
+        "argv missing --permission-mode: {argv}"
+    );
+    assert!(
+        argv.contains("acceptEdits"),
+        "argv missing acceptEdits: {argv}"
+    );
+    assert!(
+        argv.contains("--mcp-config"),
+        "argv missing --mcp-config: {argv}"
+    );
 
     let mut saw_tool_call = false;
-    while let Ok(Ok(ev)) =
-        tokio::time::timeout(Duration::from_millis(100), bus_rx.recv()).await
-    {
+    while let Ok(Ok(ev)) = tokio::time::timeout(Duration::from_millis(100), bus_rx.recv()).await {
         if let OrchestratorEvent::ToolCall { tool, .. } = ev {
             if tool == "linear_graphql.add_comment" {
                 saw_tool_call = true;

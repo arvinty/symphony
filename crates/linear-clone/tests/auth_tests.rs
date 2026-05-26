@@ -11,21 +11,27 @@ async fn admin_mint_token_requires_secret() {
 
     // Missing secret → 401
     let req = axum::http::Request::builder()
-        .method("POST").uri("/admin/tokens")
-        .header("content-type","application/json")
-        .body(axum::body::Body::from(r#"{"issue_id":"iss_1"}"#)).unwrap();
+        .method("POST")
+        .uri("/admin/tokens")
+        .header("content-type", "application/json")
+        .body(axum::body::Body::from(r#"{"issue_id":"iss_1"}"#))
+        .unwrap();
     let resp = app.clone().oneshot(req).await.unwrap();
     assert_eq!(resp.status(), 401);
 
     // With correct secret → 200 + token in body
     let req = axum::http::Request::builder()
-        .method("POST").uri("/admin/tokens")
-        .header("content-type","application/json")
-        .header("x-admin-token","test-admin")
-        .body(axum::body::Body::from(r#"{"issue_id":"iss_1"}"#)).unwrap();
+        .method("POST")
+        .uri("/admin/tokens")
+        .header("content-type", "application/json")
+        .header("x-admin-token", "test-admin")
+        .body(axum::body::Body::from(r#"{"issue_id":"iss_1"}"#))
+        .unwrap();
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), 200);
-    let bytes = axum::body::to_bytes(resp.into_body(), 1<<20).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert!(v["token"].as_str().unwrap_or("").starts_with("lct_"));
 }
@@ -35,7 +41,11 @@ async fn first_two_issue_ids(pool: &sqlx::SqlitePool) -> (String, String) {
         .fetch_all(pool)
         .await
         .unwrap();
-    assert!(rows.len() >= 2, "need at least 2 seeded issues, got {}", rows.len());
+    assert!(
+        rows.len() >= 2,
+        "need at least 2 seeded issues, got {}",
+        rows.len()
+    );
     (rows[0].0.clone(), rows[1].0.clone())
 }
 
@@ -53,7 +63,9 @@ async fn gql_with_token(
     }
     let req = req.body(axum::body::Body::from(body.to_string())).unwrap();
     let resp = app.oneshot(req).await.unwrap();
-    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
     serde_json::from_slice(&bytes).unwrap()
 }
 
@@ -66,19 +78,35 @@ async fn token_only_mutates_bound_issue() {
     let token = store.issue(&issue_a);
 
     let app = build_router_for_test_with_auth(pool.clone(), store.clone());
-    let ok = gql_with_token(app, Some(&token), json!({
-        "query": "mutation($i:ID!,$u:String!){ addAttachment(issueId:$i,url:$u){ id } }",
-        "variables": { "i": issue_a, "u": "https://example.com/pr/1" }
-    })).await;
-    assert!(ok["data"]["addAttachment"]["id"].is_string(), "expected success: {ok}");
+    let ok = gql_with_token(
+        app,
+        Some(&token),
+        json!({
+            "query": "mutation($i:ID!,$u:String!){ addAttachment(issueId:$i,url:$u){ id } }",
+            "variables": { "i": issue_a, "u": "https://example.com/pr/1" }
+        }),
+    )
+    .await;
+    assert!(
+        ok["data"]["addAttachment"]["id"].is_string(),
+        "expected success: {ok}"
+    );
 
     let app = build_router_for_test_with_auth(pool.clone(), store.clone());
-    let bad = gql_with_token(app, Some(&token), json!({
-        "query": "mutation($i:ID!,$u:String!){ addAttachment(issueId:$i,url:$u){ id } }",
-        "variables": { "i": issue_b, "u": "https://example.com/pr/2" }
-    })).await;
+    let bad = gql_with_token(
+        app,
+        Some(&token),
+        json!({
+            "query": "mutation($i:ID!,$u:String!){ addAttachment(issueId:$i,url:$u){ id } }",
+            "variables": { "i": issue_b, "u": "https://example.com/pr/2" }
+        }),
+    )
+    .await;
     let msg = bad["errors"][0]["message"].as_str().unwrap_or("");
-    assert!(msg.contains("issue_token_scope"), "expected scope error, got: {bad}");
+    assert!(
+        msg.contains("issue_token_scope"),
+        "expected scope error, got: {bad}"
+    );
 }
 
 #[tokio::test]
@@ -88,9 +116,17 @@ async fn no_token_still_allowed_back_compat() {
     let store = linear_clone::auth::TokenStore::default();
     let app = build_router_for_test_with_auth(pool, store);
 
-    let ok = gql_with_token(app, None, json!({
-        "query": "mutation($i:ID!,$u:String!){ addAttachment(issueId:$i,url:$u){ id } }",
-        "variables": { "i": issue_a, "u": "https://example.com/pr/3" }
-    })).await;
-    assert!(ok["data"]["addAttachment"]["id"].is_string(), "anonymous should still work, got: {ok}");
+    let ok = gql_with_token(
+        app,
+        None,
+        json!({
+            "query": "mutation($i:ID!,$u:String!){ addAttachment(issueId:$i,url:$u){ id } }",
+            "variables": { "i": issue_a, "u": "https://example.com/pr/3" }
+        }),
+    )
+    .await;
+    assert!(
+        ok["data"]["addAttachment"]["id"].is_string(),
+        "anonymous should still work, got: {ok}"
+    );
 }

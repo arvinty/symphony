@@ -3,12 +3,11 @@
 /// but cannot itself approve/deny tool calls — the `--permission-mode` flag tells
 /// Claude Code which decisions to take. Slice 2 (Codex) is where Symphony fully
 /// owns the approval round-trip.
-
 use super::{Harness, HarnessContext, HarnessOutcome};
 use crate::error::{Result, SymphonyError};
 use crate::events::{AgentEvent, AgentEventKind};
 use crate::model::UsageTokens;
-use crate::policy::{Policy, PermissionMode};
+use crate::policy::{PermissionMode, Policy};
 use async_trait::async_trait;
 use chrono::Utc;
 use std::process::Stdio;
@@ -43,7 +42,18 @@ impl Harness for ClaudeCodeHarness {
 
     async fn run(&self, ctx: HarnessContext<'_>) -> Result<HarnessOutcome> {
         let issue_id_clone = ctx.issue_id.clone();
-        let HarnessContext { workspace, prompt, cfg: _, tx, bus, policy, linear_token, linear_endpoint, issue_id, .. } = ctx;
+        let HarnessContext {
+            workspace,
+            prompt,
+            cfg: _,
+            tx,
+            bus,
+            policy,
+            linear_token,
+            linear_endpoint,
+            issue_id,
+            ..
+        } = ctx;
 
         let mut cmd = Command::new("claude");
         cmd.arg("-p")
@@ -63,7 +73,8 @@ impl Harness for ClaudeCodeHarness {
 
         // Wire MCP config and linear env vars when credentials are available
         if let (Some(token), Some(endpoint)) = (linear_token.as_ref(), linear_endpoint.as_ref()) {
-            let exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("symphony"));
+            let exe =
+                std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("symphony"));
             let mcp_json = crate::harness::mcp_bridge::generate_mcp_config_json(&exe, &issue_id);
             let mcp_path = workspace.join(".symphony-mcp.json");
             std::fs::write(&mcp_path, mcp_json).ok();
@@ -99,16 +110,29 @@ impl Harness for ClaudeCodeHarness {
                 match serde_json::from_str::<serde_json::Value>(&line) {
                     Ok(v) => {
                         // Surface tool_use content blocks as OrchestratorEvent::ToolCall
-                        if let Some(arr) = v.get("message").and_then(|m| m.get("content")).and_then(|c| c.as_array()) {
+                        if let Some(arr) = v
+                            .get("message")
+                            .and_then(|m| m.get("content"))
+                            .and_then(|c| c.as_array())
+                        {
                             for block in arr {
                                 if block.get("type").and_then(|s| s.as_str()) == Some("tool_use") {
-                                    let name = block.get("name").and_then(|s| s.as_str()).unwrap_or("").to_string();
-                                    let input = block.get("input").cloned().unwrap_or(serde_json::json!({}));
-                                    let _ = bus_clone.send(crate::events::broadcast::OrchestratorEvent::ToolCall {
-                                        issue_id: issue_id_clone.clone(),
-                                        tool: name,
-                                        input,
-                                    });
+                                    let name = block
+                                        .get("name")
+                                        .and_then(|s| s.as_str())
+                                        .unwrap_or("")
+                                        .to_string();
+                                    let input = block
+                                        .get("input")
+                                        .cloned()
+                                        .unwrap_or(serde_json::json!({}));
+                                    let _ = bus_clone.send(
+                                        crate::events::broadcast::OrchestratorEvent::ToolCall {
+                                            issue_id: issue_id_clone.clone(),
+                                            tool: name,
+                                            input,
+                                        },
+                                    );
                                 }
                             }
                         }
@@ -150,10 +174,7 @@ impl Harness for ClaudeCodeHarness {
             }
         });
 
-        let status = child
-            .wait()
-            .await
-            .map_err(SymphonyError::Io)?;
+        let status = child.wait().await.map_err(SymphonyError::Io)?;
         let (thread_id, last_turn_id) = stdout_handle.await.unwrap_or_default();
         let _ = stderr_handle.await;
 
@@ -162,10 +183,22 @@ impl Harness for ClaudeCodeHarness {
         }
 
         Ok(HarnessOutcome {
-            thread_id: if thread_id.is_empty() { format!("claude-{}", uuid::Uuid::new_v4()) } else { thread_id },
-            turn_id: if last_turn_id.is_empty() { format!("turn-{}", uuid::Uuid::new_v4()) } else { last_turn_id },
+            thread_id: if thread_id.is_empty() {
+                format!("claude-{}", uuid::Uuid::new_v4())
+            } else {
+                thread_id
+            },
+            turn_id: if last_turn_id.is_empty() {
+                format!("turn-{}", uuid::Uuid::new_v4())
+            } else {
+                last_turn_id
+            },
             success: !had_error,
-            error: if had_error { Some(format!("exit_status={:?}", status.code())) } else { None },
+            error: if had_error {
+                Some(format!("exit_status={:?}", status.code()))
+            } else {
+                None
+            },
         })
     }
 }
@@ -173,7 +206,10 @@ impl Harness for ClaudeCodeHarness {
 fn translate_claude_event(v: &serde_json::Value, pid: Option<&str>) -> AgentEvent {
     // Claude Code stream-json uses { "type": "...", ... }
     let ty = v.get("type").and_then(|s| s.as_str()).unwrap_or("");
-    let session_id = v.get("session_id").and_then(|s| s.as_str()).map(str::to_string);
+    let session_id = v
+        .get("session_id")
+        .and_then(|s| s.as_str())
+        .map(str::to_string);
     let kind = match ty {
         "system" if v.get("subtype").and_then(|s| s.as_str()) == Some("init") => {
             AgentEventKind::SessionStarted
@@ -200,8 +236,9 @@ fn translate_claude_event(v: &serde_json::Value, pid: Option<&str>) -> AgentEven
     // reported total reflects what the model actually processed.
     let tokens = v.get("usage").and_then(|u| {
         let get = |k: &str| u.get(k).and_then(|n| n.as_u64()).unwrap_or(0);
-        let input =
-            get("input_tokens") + get("cache_creation_input_tokens") + get("cache_read_input_tokens");
+        let input = get("input_tokens")
+            + get("cache_creation_input_tokens")
+            + get("cache_read_input_tokens");
         let output = get("output_tokens");
         Some(UsageTokens {
             input_tokens: input,
@@ -283,7 +320,10 @@ mod tests {
             }
         });
         let translated = translate_claude_event(&ev, None);
-        assert!(translated.tokens.is_none(), "assistant events must not emit tokens");
+        assert!(
+            translated.tokens.is_none(),
+            "assistant events must not emit tokens"
+        );
     }
 
     #[test]

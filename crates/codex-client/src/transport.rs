@@ -26,8 +26,10 @@ where
     }
 
     pub async fn send(&mut self, v: Value) -> ClientResult<()> {
-        let s = serde_json::to_string(&v)
-            .map_err(|e| ClientError::Decode { role: "send", source: e })?;
+        let s = serde_json::to_string(&v).map_err(|e| ClientError::Decode {
+            role: "send",
+            source: e,
+        })?;
         self.writer.write_all(s.as_bytes()).await?;
         self.writer.write_all(b"\n").await?;
         self.writer.flush().await?;
@@ -40,7 +42,11 @@ where
         if n == 0 {
             return Err(ClientError::TransportClosed);
         }
-        serde_json::from_str(self.line_buf.trim_end_matches(['\r', '\n']))
-            .map_err(|e| ClientError::Decode { role: "recv", source: e })
+        serde_json::from_str(self.line_buf.trim_end_matches(['\r', '\n'])).map_err(|e| {
+            ClientError::Decode {
+                role: "recv",
+                source: e,
+            }
+        })
     }
 }

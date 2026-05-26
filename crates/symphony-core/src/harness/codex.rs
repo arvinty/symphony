@@ -39,8 +39,8 @@ impl Harness for CodexHarness {
 
     async fn run(&self, ctx: HarnessContext<'_>) -> Result<HarnessOutcome> {
         // 1. Build MCP bridge config for Linear tooling.
-        let symphony_exe = std::env::current_exe()
-            .unwrap_or_else(|_| std::path::PathBuf::from("symphony"));
+        let symphony_exe =
+            std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("symphony"));
         let mcp_inline_toml = format!(
             "mcp_servers.linear = {{ command = \"{}\", args = [\"mcp-bridge\", \"--issue\", \"{}\"] }}",
             toml_basic_string(&symphony_exe.to_string_lossy()),
@@ -81,9 +81,8 @@ impl Harness for CodexHarness {
             }
         });
 
-        let (client, notifs) = Client::connect(child).map_err(|e| {
-            SymphonyError::CodexClient(format!("connect: {e}"))
-        })?;
+        let (client, notifs) = Client::connect(child)
+            .map_err(|e| SymphonyError::CodexClient(format!("connect: {e}")))?;
 
         run_with_client(Arc::new(client), notifs, &ctx).await
     }
@@ -235,7 +234,11 @@ pub async fn run_with_client(
                 KnownServerNotification::Error(n) => {
                     let msg = serde_json::to_value(&n)
                         .ok()
-                        .and_then(|v| v.get("message").and_then(|m| m.as_str()).map(str::to_string))
+                        .and_then(|v| {
+                            v.get("message")
+                                .and_then(|m| m.as_str())
+                                .map(str::to_string)
+                        })
                         .unwrap_or_else(|| "codex error".into());
                     error_msg = Some(msg.clone());
                     let _ = ctx
@@ -430,7 +433,12 @@ async fn handle_review_completed(
                 }
             });
         }
-        (_, GuardianApprovalReviewStatus::TimedOut | GuardianApprovalReviewStatus::Aborted | GuardianApprovalReviewStatus::InProgress) => {
+        (
+            _,
+            GuardianApprovalReviewStatus::TimedOut
+            | GuardianApprovalReviewStatus::Aborted
+            | GuardianApprovalReviewStatus::InProgress,
+        ) => {
             let _ = tx
                 .send(AgentEvent {
                     kind: AgentEventKind::Notification,

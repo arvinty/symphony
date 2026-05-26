@@ -20,7 +20,10 @@ approval_timeout_ms: 60000
     let p: Policy = serde_yaml::from_str(yaml).unwrap();
     assert_eq!(p.permission_mode, PermissionMode::RequireApproval);
     assert_eq!(p.sandbox, SandboxProfile::ReadOnly);
-    assert_eq!(p.allowed_tools, vec!["Bash".to_string(), "Edit".to_string()]);
+    assert_eq!(
+        p.allowed_tools,
+        vec!["Bash".to_string(), "Edit".to_string()]
+    );
     assert_eq!(p.approval_timeout_ms, 60_000);
 }
 

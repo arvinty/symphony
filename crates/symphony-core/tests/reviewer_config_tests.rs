@@ -24,7 +24,10 @@ prompt
     );
     let wf = load_workflow(&p).unwrap();
     let cfg = EffectiveConfig::from_workflow(&wf).unwrap();
-    assert!(!cfg.reviewer.enabled, "reviewer should be disabled by default");
+    assert!(
+        !cfg.reviewer.enabled,
+        "reviewer should be disabled by default"
+    );
 }
 
 #[test]

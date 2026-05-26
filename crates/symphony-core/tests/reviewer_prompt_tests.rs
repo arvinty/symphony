@@ -31,7 +31,10 @@ fn missing_variable_returns_error() {
     let tpl = "{{nonexistent}}";
     let err = render_reviewer_prompt(tpl, "DEMO-1", "t", "u").unwrap_err();
     let msg = format!("{err}");
-    assert!(msg.contains("Unknown variable") || msg.contains("nonexistent"), "{msg}");
+    assert!(
+        msg.contains("Unknown variable") || msg.contains("nonexistent"),
+        "{msg}"
+    );
 }
 
 #[test]

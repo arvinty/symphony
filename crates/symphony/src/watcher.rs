@@ -12,10 +12,7 @@ pub async fn watch_workflow(orch: Orchestrator, workflow_path: PathBuf) -> Resul
     let mut watcher: RecommendedWatcher = notify::recommended_watcher(move |res| {
         let _ = tx.send(res);
     })?;
-    let parent = workflow_path
-        .parent()
-        .map(|p| p.to_path_buf())
-        .unwrap_or_else(|| PathBuf::from("."));
+    let parent = workflow_parent(&workflow_path);
     watcher.watch(&parent, RecursiveMode::NonRecursive)?;
 
     loop {
@@ -24,7 +21,11 @@ pub async fn watch_workflow(orch: Orchestrator, workflow_path: PathBuf) -> Resul
                 if !matches!(event.kind, EventKind::Modify(_) | EventKind::Create(_)) {
                     continue;
                 }
-                if !event.paths.iter().any(|p| p.ends_with(workflow_path.file_name().unwrap_or_default())) {
+                if !event
+                    .paths
+                    .iter()
+                    .any(|p| p.ends_with(workflow_path.file_name().unwrap_or_default()))
+                {
                     continue;
                 }
                 match load_workflow(&workflow_path) {
@@ -46,5 +47,32 @@ pub async fn watch_workflow(orch: Orchestrator, workflow_path: PathBuf) -> Resul
                 tokio::time::sleep(Duration::from_millis(50)).await;
             }
         }
+    }
+}
+
+fn workflow_parent(workflow_path: &std::path::Path) -> PathBuf {
+    workflow_path
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::workflow_parent;
+    use std::path::Path;
+
+    #[test]
+    fn relative_workflow_in_cwd_watches_dot() {
+        assert_eq!(workflow_parent(Path::new("WORKFLOW.md")), Path::new("."));
+    }
+
+    #[test]
+    fn nested_workflow_watches_parent_dir() {
+        assert_eq!(
+            workflow_parent(Path::new("docs/WORKFLOW.md")),
+            Path::new("docs")
+        );
     }
 }

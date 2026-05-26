@@ -105,7 +105,10 @@ async fn main() -> Result<()> {
 /// Resolves when the process receives SIGINT or (on Unix) SIGTERM.
 async fn shutdown_signal() {
     let ctrl_c = async {
-        let _ = tokio::signal::ctrl_c().await;
+        if let Err(e) = tokio::signal::ctrl_c().await {
+            tracing::warn!("sigint_handler_failed: {e}");
+            std::future::pending::<()>().await;
+        }
     };
 
     #[cfg(unix)]

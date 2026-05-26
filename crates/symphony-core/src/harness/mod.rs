@@ -1,17 +1,17 @@
 use crate::config::EffectiveConfig;
 use crate::error::Result;
-use crate::events::AgentEvent;
 use crate::events::broadcast::OrchestratorEventBus;
+use crate::events::AgentEvent;
 use crate::harness::approvals::ApprovalRouter;
 use crate::policy::Policy;
 use async_trait::async_trait;
 use std::path::Path;
 use tokio::sync::mpsc;
 
-pub mod claude_code;
-pub mod hermes;
-pub mod codex;
 pub mod approvals;
+pub mod claude_code;
+pub mod codex;
+pub mod hermes;
 pub mod mcp_bridge;
 
 pub struct HarnessContext<'a> {
@@ -43,10 +43,14 @@ pub struct HarnessOutcome {
 
 pub fn select_harness(name: &str) -> Box<dyn Harness + Send + Sync> {
     match name {
-        "claude_code" | "claude" | "claude-code" => Box::new(claude_code::ClaudeCodeHarness::default()),
+        "claude_code" | "claude" | "claude-code" => {
+            Box::new(claude_code::ClaudeCodeHarness::default())
+        }
         "hermes" => Box::new(hermes::HermesHarness::default()),
         "codex" | "codex-app-server" => Box::new(codex::CodexHarness::default()),
-        other => Box::new(UnknownHarness { name: other.to_string() }),
+        other => Box::new(UnknownHarness {
+            name: other.to_string(),
+        }),
     }
 }
 
@@ -61,6 +65,8 @@ impl Harness for UnknownHarness {
         "unknown"
     }
     async fn run(&self, _ctx: HarnessContext<'_>) -> Result<HarnessOutcome> {
-        Err(crate::error::SymphonyError::UnknownHarness(self.name.clone()))
+        Err(crate::error::SymphonyError::UnknownHarness(
+            self.name.clone(),
+        ))
     }
 }

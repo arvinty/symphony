@@ -44,7 +44,10 @@ async fn fetches_terminal_state_filter() {
 async fn fetches_states_by_id() {
     let p = write_mock(payload());
     let t = FileMockTracker::new(p, vec!["Todo".into()]);
-    let m = t.fetch_issue_states_by_ids(&["a".into(), "c".into()]).await.unwrap();
+    let m = t
+        .fetch_issue_states_by_ids(&["a".into(), "c".into()])
+        .await
+        .unwrap();
     assert_eq!(m.get("a").unwrap(), "Todo");
     assert_eq!(m.get("c").unwrap(), "Done");
     assert!(!m.contains_key("b"));

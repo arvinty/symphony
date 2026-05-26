@@ -71,13 +71,17 @@ pub fn translate_codex_approval_policy(p: &Policy) -> AskForApproval {
 pub fn translate_codex_sandbox_policy(p: &Policy) -> SandboxPolicy {
     match (&p.permission_mode, &p.sandbox) {
         // ReadOnly mode forces the strictest sandbox regardless of `sandbox`.
-        (PermissionMode::ReadOnly, _) => SandboxPolicy::ReadOnly { network_access: false },
+        (PermissionMode::ReadOnly, _) => SandboxPolicy::ReadOnly {
+            network_access: false,
+        },
         // RequireApproval falls back to read-only so the guardian gates writes.
-        (PermissionMode::RequireApproval, _) => SandboxPolicy::ReadOnly { network_access: false },
+        (PermissionMode::RequireApproval, _) => SandboxPolicy::ReadOnly {
+            network_access: false,
+        },
         // AcceptEdits maps directly from the sandbox profile.
-        (PermissionMode::AcceptEdits, SandboxProfile::ReadOnly) => {
-            SandboxPolicy::ReadOnly { network_access: false }
-        }
+        (PermissionMode::AcceptEdits, SandboxProfile::ReadOnly) => SandboxPolicy::ReadOnly {
+            network_access: false,
+        },
         (PermissionMode::AcceptEdits, SandboxProfile::WorkspaceWrite) => {
             SandboxPolicy::WorkspaceWrite {
                 exclude_slash_tmp: false,
@@ -86,6 +90,8 @@ pub fn translate_codex_sandbox_policy(p: &Policy) -> SandboxPolicy {
                 writable_roots: vec![],
             }
         }
-        (PermissionMode::AcceptEdits, SandboxProfile::Unrestricted) => SandboxPolicy::DangerFullAccess,
+        (PermissionMode::AcceptEdits, SandboxProfile::Unrestricted) => {
+            SandboxPolicy::DangerFullAccess
+        }
     }
 }

@@ -176,9 +176,11 @@ impl QueryRoot {
 
     async fn projects(&self, ctx: &Context<'_>) -> Result<Vec<Project>> {
         let pool = ctx.data::<SqlitePool>()?;
-        let rows = sqlx::query("SELECT id, slug_id, name, description, color, icon FROM projects ORDER BY name")
-            .fetch_all(pool)
-            .await?;
+        let rows = sqlx::query(
+            "SELECT id, slug_id, name, description, color, icon FROM projects ORDER BY name",
+        )
+        .fetch_all(pool)
+        .await?;
         Ok(rows
             .into_iter()
             .map(|r| Project {
@@ -194,9 +196,11 @@ impl QueryRoot {
 
     async fn workflow_states(&self, ctx: &Context<'_>) -> Result<Vec<WorkflowState>> {
         let pool = ctx.data::<SqlitePool>()?;
-        let rows = sqlx::query("SELECT id, name, type, position, color FROM workflow_states ORDER BY position")
-            .fetch_all(pool)
-            .await?;
+        let rows = sqlx::query(
+            "SELECT id, name, type, position, color FROM workflow_states ORDER BY position",
+        )
+        .fetch_all(pool)
+        .await?;
         Ok(rows
             .into_iter()
             .map(|r| WorkflowState {
@@ -295,7 +299,8 @@ impl QueryRoot {
                 if let Some(sf) = &s.name {
                     if let Some(values) = &sf.r#in {
                         if !values.is_empty() {
-                            let placeholders = values.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+                            let placeholders =
+                                values.iter().map(|_| "?").collect::<Vec<_>>().join(",");
                             where_clauses.push(format!("ws.name IN ({})", placeholders));
                             for v in values {
                                 binds.push(v.clone());
@@ -388,7 +393,11 @@ impl QueryRoot {
                 attachments: AttachmentConnection { nodes: attachments },
             });
         }
-        let end_cursor = if has_next { Some((offset + limit).to_string()) } else { None };
+        let end_cursor = if has_next {
+            Some((offset + limit).to_string())
+        } else {
+            None
+        };
         Ok(IssueConnection {
             page_info: PageInfo {
                 has_next_page: has_next,
@@ -403,26 +412,31 @@ pub struct MutationRoot;
 
 #[Object]
 impl MutationRoot {
-    async fn create_issue(
-        &self,
-        ctx: &Context<'_>,
-        input: CreateIssueInput,
-    ) -> Result<String> {
+    async fn create_issue(&self, ctx: &Context<'_>, input: CreateIssueInput) -> Result<String> {
         let pool = ctx.data::<SqlitePool>()?;
         let mut tx = pool.begin().await?;
         let team_id = input.team_id.to_string();
         let team_key: String = sqlx::query_scalar("SELECT key FROM teams WHERE id = ?")
-            .bind(&team_id).fetch_one(&mut *tx).await?;
+            .bind(&team_id)
+            .fetch_one(&mut *tx)
+            .await?;
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM issues WHERE team_id = ?")
-            .bind(&team_id).fetch_one(&mut *tx).await?;
+            .bind(&team_id)
+            .fetch_one(&mut *tx)
+            .await?;
         let number = count + 1;
         let identifier = format!("{}-{}", team_key, number);
         let id = format!("iss_{}", Uuid::new_v4());
-        let state_id: String = match input.state_id {
-            Some(s) => s.to_string(),
-            None => sqlx::query_scalar("SELECT id FROM workflow_states WHERE team_id = ? AND name = 'Todo' LIMIT 1")
-                .bind(&team_id).fetch_one(&mut *tx).await?,
-        };
+        let state_id: String =
+            match input.state_id {
+                Some(s) => s.to_string(),
+                None => sqlx::query_scalar(
+                    "SELECT id FROM workflow_states WHERE team_id = ? AND name = 'Todo' LIMIT 1",
+                )
+                .bind(&team_id)
+                .fetch_one(&mut *tx)
+                .await?,
+            };
         sqlx::query(
             "INSERT INTO issues (id, identifier, number, title, description, priority, team_id, project_id, state_id, assignee_id) VALUES (?,?,?,?,?,?,?,?,?,?)"
         )
@@ -465,19 +479,24 @@ impl MutationRoot {
             .bind(&id).bind(issue_id.as_str()).bind("pull_request")
             .bind(&url).bind(&title).bind(now.to_rfc3339())
             .execute(pool).await?;
-        Ok(Attachment { id: id.into(), kind: "pull_request".into(), url, title, created_at: now })
+        Ok(Attachment {
+            id: id.into(),
+            kind: "pull_request".into(),
+            url,
+            title,
+            created_at: now,
+        })
     }
 
     async fn remove_attachment(&self, ctx: &Context<'_>, id: ID) -> Result<bool> {
         let pool = ctx.data_unchecked::<SqlitePool>();
         if let Some(auth) = ctx.data_opt::<crate::auth::AuthCtx>() {
             if let Some(bound) = &auth.bound_issue {
-                let att_issue: Option<String> = sqlx::query_scalar(
-                    "SELECT issue_id FROM attachments WHERE id = ?",
-                )
-                .bind(id.as_str())
-                .fetch_optional(pool)
-                .await?;
+                let att_issue: Option<String> =
+                    sqlx::query_scalar("SELECT issue_id FROM attachments WHERE id = ?")
+                        .bind(id.as_str())
+                        .fetch_optional(pool)
+                        .await?;
                 if let Some(att_issue) = att_issue {
                     if &att_issue != bound {
                         return Err(async_graphql::Error::new("issue_token_scope mismatch"));
@@ -486,7 +505,10 @@ impl MutationRoot {
             }
         }
         let n = sqlx::query("DELETE FROM attachments WHERE id = ?")
-            .bind(id.as_str()).execute(pool).await?.rows_affected();
+            .bind(id.as_str())
+            .execute(pool)
+            .await?
+            .rows_affected();
         Ok(n > 0)
     }
 }
@@ -591,10 +613,12 @@ async fn load_user(pool: &SqlitePool, id: &str) -> Result<User> {
 }
 
 async fn load_project(pool: &SqlitePool, id: &str) -> Result<Project> {
-    let r = sqlx::query("SELECT id, slug_id, name, description, color, icon FROM projects WHERE id = ?")
-        .bind(id)
-        .fetch_one(pool)
-        .await?;
+    let r = sqlx::query(
+        "SELECT id, slug_id, name, description, color, icon FROM projects WHERE id = ?",
+    )
+    .bind(id)
+    .fetch_one(pool)
+    .await?;
     Ok(Project {
         id: r.get::<String, _>("id").into(),
         slug_id: r.get("slug_id"),

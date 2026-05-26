@@ -1,7 +1,7 @@
 pub mod auth;
 pub mod db;
-pub mod schema;
 pub mod rest;
+pub mod schema;
 
 use async_graphql::http::{playground_source, GraphQLPlaygroundConfig};
 use async_graphql_axum::{GraphQLRequest, GraphQLResponse};
@@ -43,7 +43,11 @@ async fn graphql_handler(
         .and_then(|s| s.strip_prefix("Bearer "))
         .and_then(|t| state.token_store.lookup(t.trim()));
     let ctx = auth::AuthCtx { bound_issue: bound };
-    state.schema.execute(req.into_inner().data(ctx)).await.into()
+    state
+        .schema
+        .execute(req.into_inner().data(ctx))
+        .await
+        .into()
 }
 
 async fn graphql_playground() -> impl IntoResponse {
@@ -84,5 +88,9 @@ pub fn build_router_for_test(pool: SqlitePool) -> Router {
 
 pub fn build_router_for_test_with_auth(pool: SqlitePool, token_store: TokenStore) -> Router {
     let schema = build_schema(pool.clone());
-    build_router(AppState { pool, schema, token_store })
+    build_router(AppState {
+        pool,
+        schema,
+        token_store,
+    })
 }

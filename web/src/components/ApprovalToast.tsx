@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useEventStream } from "../hooks/useEventStream";
+import { symphonyApiUrl } from "../symphonyApi";
 
 type Pending = { approval_id: string; issue_id: string; tool: string; input: unknown };
 
@@ -22,7 +23,7 @@ export function ApprovalToast() {
   }, [events]);
 
   async function decide(id: string, allow: boolean) {
-    await fetch(`/api/v1/approvals/${id}`, {
+    await fetch(symphonyApiUrl(`/api/v1/approvals/${id}`), {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ allow, reason: allow ? "operator" : "denied" }),

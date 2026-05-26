@@ -125,5 +125,10 @@ workspace:
     let wf = load_workflow(&p).unwrap();
     let cfg = EffectiveConfig::from_workflow(&wf).unwrap();
     let parent = p.parent().unwrap();
-    assert!(cfg.workspace_root.starts_with(parent), "{:?} should start with {:?}", cfg.workspace_root, parent);
+    assert!(
+        cfg.workspace_root.starts_with(parent),
+        "{:?} should start with {:?}",
+        cfg.workspace_root,
+        parent
+    );
 }

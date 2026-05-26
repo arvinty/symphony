@@ -36,7 +36,9 @@ impl WorkspaceManager {
         verify_inside_root(&self.root, &path)?;
 
         let created_now = if !path.exists() {
-            tokio::fs::create_dir_all(&path).await.map_err(SymphonyError::Io)?;
+            tokio::fs::create_dir_all(&path)
+                .await
+                .map_err(SymphonyError::Io)?;
             true
         } else {
             false
@@ -95,7 +97,9 @@ impl WorkspaceManager {
                 self.hooks.timeout_ms,
             )
             .await;
-            tokio::fs::remove_dir_all(&path).await.map_err(SymphonyError::Io)?;
+            tokio::fs::remove_dir_all(&path)
+                .await
+                .map_err(SymphonyError::Io)?;
         }
         Ok(())
     }

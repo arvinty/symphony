@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { symphonyApiUrl } from "../symphonyApi";
 
 export type OrchestratorEvent =
   | { kind: "agent_event"; issue_id: string; event: unknown }
@@ -16,9 +17,11 @@ export function useEventStream(issueId?: string): OrchestratorEvent[] {
 
   useEffect(() => {
     setEvents([]);
-    const url = issueId
-      ? `/api/v1/events?issue=${encodeURIComponent(issueId)}`
-      : "/api/v1/events";
+    const url = symphonyApiUrl(
+      issueId
+        ? `/api/v1/events?issue=${encodeURIComponent(issueId)}`
+        : "/api/v1/events",
+    );
     const es = new EventSource(url);
     es.onmessage = (e) => {
       try {

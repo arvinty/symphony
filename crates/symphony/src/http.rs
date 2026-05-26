@@ -1,8 +1,8 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    response::{Html, IntoResponse, Json},
     response::sse::{Event, KeepAlive, Sse},
+    response::{Html, IntoResponse, Json},
     routing::{get, post},
     Router,
 };
@@ -14,6 +14,7 @@ use std::net::SocketAddr;
 use symphony_core::events::broadcast::OrchestratorEvent;
 use symphony_core::orchestrator::Orchestrator;
 use tokio_stream::wrappers::BroadcastStream;
+use tower_http::cors::{Any, CorsLayer};
 
 pub async fn serve(
     orch: Orchestrator,
@@ -30,7 +31,13 @@ pub async fn serve(
         .route("/api/v1/approvals/{approval_id}", post(api_approve))
         .route("/api/v1/{identifier}/open-pr", post(api_retry_pr))
         .route("/api/v1/{identifier}", get(api_issue))
-        .with_state(orch);
+        .with_state(orch)
+        .layer(
+            CorsLayer::new()
+                .allow_origin(Any)
+                .allow_methods(Any)
+                .allow_headers(Any),
+        );
     let addr = SocketAddr::from(([127, 0, 0, 1], port));
     tracing::info!(%addr, "symphony_http_listening");
     let listener = tokio::net::TcpListener::bind(addr).await?;
@@ -59,17 +66,83 @@ async fn metrics(State(orch): State<Orchestrator>) -> impl IntoResponse {
         .unwrap_or(0.0);
 
     let mut body = String::new();
-    push_metric(&mut body, "symphony_running_agents", "gauge", "Agents currently running.", &s.running.len().to_string());
-    push_metric(&mut body, "symphony_claimed_issues", "gauge", "Issues claimed but not yet running.", &s.claimed.len().to_string());
-    push_metric(&mut body, "symphony_retrying_issues", "gauge", "Issues waiting for a backoff retry.", &s.retry_attempts.len().to_string());
-    push_metric(&mut body, "symphony_completed_issues", "gauge", "Completed issue ids remembered this run (capped).", &s.completed.len().to_string());
-    push_metric(&mut body, "symphony_max_concurrent_agents", "gauge", "Configured max concurrent agents.", &s.max_concurrent_agents.to_string());
-    push_metric(&mut body, "symphony_poll_interval_ms", "gauge", "Configured poll interval in milliseconds.", &s.poll_interval_ms.to_string());
-    push_metric(&mut body, "symphony_uptime_seconds", "gauge", "Seconds since the orchestrator started.", &format!("{uptime:.0}"));
-    push_metric(&mut body, "symphony_tokens_input_total", "counter", "Cumulative agent input tokens.", &s.codex_totals.input_tokens.to_string());
-    push_metric(&mut body, "symphony_tokens_output_total", "counter", "Cumulative agent output tokens.", &s.codex_totals.output_tokens.to_string());
-    push_metric(&mut body, "symphony_tokens_total", "counter", "Cumulative agent total tokens.", &s.codex_totals.total_tokens.to_string());
-    push_metric(&mut body, "symphony_agent_seconds_total", "counter", "Cumulative seconds of completed agent sessions.", &format!("{:.3}", s.codex_totals.seconds_running_completed));
+    push_metric(
+        &mut body,
+        "symphony_running_agents",
+        "gauge",
+        "Agents currently running.",
+        &s.running.len().to_string(),
+    );
+    push_metric(
+        &mut body,
+        "symphony_claimed_issues",
+        "gauge",
+        "Issues claimed but not yet running.",
+        &s.claimed.len().to_string(),
+    );
+    push_metric(
+        &mut body,
+        "symphony_retrying_issues",
+        "gauge",
+        "Issues waiting for a backoff retry.",
+        &s.retry_attempts.len().to_string(),
+    );
+    push_metric(
+        &mut body,
+        "symphony_completed_issues",
+        "gauge",
+        "Completed issue ids remembered this run (capped).",
+        &s.completed.len().to_string(),
+    );
+    push_metric(
+        &mut body,
+        "symphony_max_concurrent_agents",
+        "gauge",
+        "Configured max concurrent agents.",
+        &s.max_concurrent_agents.to_string(),
+    );
+    push_metric(
+        &mut body,
+        "symphony_poll_interval_ms",
+        "gauge",
+        "Configured poll interval in milliseconds.",
+        &s.poll_interval_ms.to_string(),
+    );
+    push_metric(
+        &mut body,
+        "symphony_uptime_seconds",
+        "gauge",
+        "Seconds since the orchestrator started.",
+        &format!("{uptime:.0}"),
+    );
+    push_metric(
+        &mut body,
+        "symphony_tokens_input_total",
+        "counter",
+        "Cumulative agent input tokens.",
+        &s.codex_totals.input_tokens.to_string(),
+    );
+    push_metric(
+        &mut body,
+        "symphony_tokens_output_total",
+        "counter",
+        "Cumulative agent output tokens.",
+        &s.codex_totals.output_tokens.to_string(),
+    );
+    push_metric(
+        &mut body,
+        "symphony_tokens_total",
+        "counter",
+        "Cumulative agent total tokens.",
+        &s.codex_totals.total_tokens.to_string(),
+    );
+    push_metric(
+        &mut body,
+        "symphony_agent_seconds_total",
+        "counter",
+        "Cumulative seconds of completed agent sessions.",
+        &format!("{:.3}", s.codex_totals.seconds_running_completed),
+    );
 
     (
         StatusCode::OK,
@@ -191,7 +264,11 @@ async fn api_issue(
     Path(identifier): Path<String>,
 ) -> impl IntoResponse {
     let s = orch.snapshot().await;
-    if let Some((_id, run)) = s.running.iter().find(|(_, r)| r.issue.identifier == identifier) {
+    if let Some((_id, run)) = s
+        .running
+        .iter()
+        .find(|(_, r)| r.issue.identifier == identifier)
+    {
         return Json(json!({
             "issue_identifier": run.issue.identifier,
             "issue_id": run.issue.id,
@@ -210,7 +287,11 @@ async fn api_issue(
         }))
         .into_response();
     }
-    if let Some(retry) = s.retry_attempts.values().find(|r| r.identifier == identifier) {
+    if let Some(retry) = s
+        .retry_attempts
+        .values()
+        .find(|r| r.identifier == identifier)
+    {
         return Json(json!({
             "issue_identifier": retry.identifier,
             "issue_id": retry.issue_id,
@@ -218,7 +299,11 @@ async fn api_issue(
             "retry": { "attempt": retry.attempt, "due_at_ms": retry.due_at_ms, "error": retry.error }
         })).into_response();
     }
-    (StatusCode::NOT_FOUND, Json(json!({ "error": { "code": "issue_not_found", "message": identifier }}))).into_response()
+    (
+        StatusCode::NOT_FOUND,
+        Json(json!({ "error": { "code": "issue_not_found", "message": identifier }})),
+    )
+        .into_response()
 }
 
 async fn api_refresh(State(orch): State<Orchestrator>) -> impl IntoResponse {
@@ -234,12 +319,19 @@ async fn api_approve(
     Json(body): Json<serde_json::Value>,
 ) -> impl IntoResponse {
     let allow = body.get("allow").and_then(|v| v.as_bool()).unwrap_or(false);
-    let reason = body.get("reason").and_then(|v| v.as_str()).map(str::to_string);
+    let reason = body
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .map(str::to_string);
     let resolved = orch.approval_router().resolve(&approval_id, allow, reason);
     if resolved {
         (StatusCode::OK, Json(json!({"resolved": true}))).into_response()
     } else {
-        (StatusCode::NOT_FOUND, Json(json!({"resolved": false, "reason": "unknown_or_already_resolved"}))).into_response()
+        (
+            StatusCode::NOT_FOUND,
+            Json(json!({"resolved": false, "reason": "unknown_or_already_resolved"})),
+        )
+            .into_response()
     }
 }
 
@@ -278,10 +370,14 @@ async fn api_events(
                             | OrchestratorEvent::VcsError { issue_id, .. }
                             | OrchestratorEvent::ReviewerStarted { issue_id, .. }
                             | OrchestratorEvent::ReviewerCompleted { issue_id, .. }
-                            | OrchestratorEvent::IssueCompleted { issue_id, .. } => Some(issue_id.clone()),
+                            | OrchestratorEvent::IssueCompleted { issue_id, .. } => {
+                                Some(issue_id.clone())
+                            }
                             OrchestratorEvent::Resync => None,
                         };
-                        if !matches!(evt, OrchestratorEvent::Resync) && issue.as_deref() != Some(want.as_str()) {
+                        if !matches!(evt, OrchestratorEvent::Resync)
+                            && issue.as_deref() != Some(want.as_str())
+                        {
                             return None;
                         }
                     }

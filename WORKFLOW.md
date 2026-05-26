@@ -1,8 +1,10 @@
 ---
 tracker:
-  kind: file_mock
-  endpoint: ./issues.mock.json
-  active_states: ["Todo", "In Progress"]
+  kind: linear
+  endpoint: http://127.0.0.1:4000/graphql
+  api_key: dev-token
+  project_slug: symphony
+  active_states: ["In Progress"]
   terminal_states: ["Done", "Cancelled"]
 
 polling:
@@ -41,18 +43,19 @@ server:
 policy:
   permission_mode: accept_edits   # accept_edits | require_approval | read_only
   sandbox: workspace_write        # unrestricted | workspace_write | read_only
-  allowed_tools: []
+  allowed_tools: ["Bash(git *)"]
   approval_timeout_ms: 300000
 
 vcs:
-  # `remote` is passed straight to `git push -u <remote> HEAD:<branch>`.
+  # If `remote` is set, Symphony pushes each completed issue branch with
+  # `git push -u <remote> HEAD:<branch>`.
   # The default per-issue workspace is a fresh `git init` (see hooks.after_create)
   # with NO remotes configured, so a bare name like `origin` will fail with
   # "'origin' does not appear to be a git repository". Either:
   #   - set `remote` to a real URL or path (e.g. git@github.com:you/repo.git),
   #     which `git push` accepts directly, OR
   #   - extend hooks.after_create to clone the target repo / `git remote add`.
-  remote: origin
+  # remote: origin
   branch_prefix: symphony/
   auto_open_pr: false
 

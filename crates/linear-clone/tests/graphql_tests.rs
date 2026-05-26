@@ -20,11 +20,22 @@ async fn graphql_lists_seeded_issues() {
 
     let resp = app.oneshot(req).await.unwrap();
     assert_eq!(resp.status(), axum::http::StatusCode::OK);
-    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    let nodes = v["data"]["issues"]["nodes"].as_array().expect("nodes array");
-    assert!(nodes.len() >= 4, "expected seeded issues, got {}", nodes.len());
-    let ids: Vec<&str> = nodes.iter().map(|n| n["identifier"].as_str().unwrap()).collect();
+    let nodes = v["data"]["issues"]["nodes"]
+        .as_array()
+        .expect("nodes array");
+    assert!(
+        nodes.len() >= 4,
+        "expected seeded issues, got {}",
+        nodes.len()
+    );
+    let ids: Vec<&str> = nodes
+        .iter()
+        .map(|n| n["identifier"].as_str().unwrap())
+        .collect();
     assert!(ids.contains(&"ENG-1"));
 }
 
@@ -47,7 +58,9 @@ async fn graphql_filters_by_project_slug_and_state() {
         .unwrap();
 
     let resp = app.oneshot(req).await.unwrap();
-    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     let nodes = v["data"]["issues"]["nodes"].as_array().unwrap();
     assert!(!nodes.is_empty());
@@ -74,7 +87,9 @@ async fn update_issue_state_mutation() {
         .unwrap();
 
     let resp = app.oneshot(req).await.unwrap();
-    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20).await.unwrap();
+    let bytes = axum::body::to_bytes(resp.into_body(), 1 << 20)
+        .await
+        .unwrap();
     let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
     assert_eq!(v["data"]["updateIssueState"], true);
 }

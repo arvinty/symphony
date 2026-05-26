@@ -17,7 +17,10 @@ pub struct TokenStore {
 impl TokenStore {
     pub fn issue(&self, issue_id: &str) -> String {
         let token = format!("lct_{}", Uuid::new_v4().simple());
-        self.inner.lock().unwrap().insert(token.clone(), issue_id.to_string());
+        self.inner
+            .lock()
+            .unwrap()
+            .insert(token.clone(), issue_id.to_string());
         token
     }
 
@@ -37,11 +40,17 @@ pub async fn admin_mint_token(
     Json(body): Json<Value>,
 ) -> Result<Json<Value>, StatusCode> {
     let want = std::env::var("LINEAR_CLONE_ADMIN_TOKEN").unwrap_or_default();
-    let got = headers.get("x-admin-token").and_then(|v| v.to_str().ok()).unwrap_or_default();
+    let got = headers
+        .get("x-admin-token")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or_default();
     if want.is_empty() || got != want {
         return Err(StatusCode::UNAUTHORIZED);
     }
-    let issue_id = body.get("issue_id").and_then(|v| v.as_str()).ok_or(StatusCode::BAD_REQUEST)?;
+    let issue_id = body
+        .get("issue_id")
+        .and_then(|v| v.as_str())
+        .ok_or(StatusCode::BAD_REQUEST)?;
     let token = state.token_store.issue(issue_id);
     Ok(Json(serde_json::json!({"token": token})))
 }

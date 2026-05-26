@@ -72,7 +72,10 @@ impl LinearTracker {
             .get("description")
             .and_then(|v| v.as_str())
             .map(str::to_string);
-        let priority = node.get("priority").and_then(|v| v.as_i64()).map(|n| n as i32);
+        let priority = node
+            .get("priority")
+            .and_then(|v| v.as_i64())
+            .map(|n| n as i32);
         let state = node
             .get("state")
             .and_then(|s| s.get("name"))
@@ -83,10 +86,7 @@ impl LinearTracker {
             .get("branchName")
             .and_then(|v| v.as_str())
             .map(str::to_string);
-        let url = node
-            .get("url")
-            .and_then(|v| v.as_str())
-            .map(str::to_string);
+        let url = node.get("url").and_then(|v| v.as_str()).map(str::to_string);
         let labels: Vec<String> = node
             .get("labels")
             .and_then(|l| l.get("nodes"))
@@ -104,9 +104,7 @@ impl LinearTracker {
             .and_then(|n| n.as_array())
             .map(|a| {
                 a.iter()
-                    .filter(|r| {
-                        r.get("type").and_then(|v| v.as_str()) == Some("blocks")
-                    })
+                    .filter(|r| r.get("type").and_then(|v| v.as_str()) == Some("blocks"))
                     .filter_map(|r| {
                         let issue = r.get("issue")?;
                         Some(BlockerRef {
@@ -214,7 +212,9 @@ impl LinearTracker {
 }
 
 fn parse_iso(s: &str) -> Option<DateTime<Utc>> {
-    DateTime::parse_from_rfc3339(s).ok().map(|d| d.with_timezone(&Utc))
+    DateTime::parse_from_rfc3339(s)
+        .ok()
+        .map(|d| d.with_timezone(&Utc))
 }
 
 #[async_trait]
@@ -225,10 +225,7 @@ impl super::Tracker for LinearTracker {
     async fn fetch_issues_by_states(&self, states: &[String]) -> Result<Vec<Issue>> {
         self.fetch_with_states(states).await
     }
-    async fn fetch_issue_states_by_ids(
-        &self,
-        ids: &[String],
-    ) -> Result<HashMap<String, String>> {
+    async fn fetch_issue_states_by_ids(&self, ids: &[String]) -> Result<HashMap<String, String>> {
         let query = r#"
         query States($ids: [ID!]!) {
           issues(filter: { id: { in: $ids } }, first: 250) {

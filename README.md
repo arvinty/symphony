@@ -68,11 +68,13 @@ JSON state at <http://127.0.0.1:8080/api/v1/state>.
 ```pwsh
 # Build the web UI once — output lands in crates/linear-clone/static/,
 # which is linear-clone's default --web-dir, so it's served automatically.
-cd web && npm install && npm run build && cd ..
+# VITE_SYMPHONY_API_BASE lets the UI served by linear-clone reach Symphony's
+# SSE and approval endpoints on :8080.
+cd web && npm install && VITE_SYMPHONY_API_BASE=http://127.0.0.1:8080 npm run build && cd ..
 cargo run -p linear-clone -- --port 4000   # serves the built UI at /
 
 # Or, for live frontend development:
-cd web && npm run dev   # http://localhost:5173, proxies /graphql + /api to :4000
+cd web && npm run dev   # http://localhost:5173, proxies /graphql to :4000 and /api to :8080
 ```
 
 If `crates/linear-clone/static/` is absent (UI not built), linear-clone

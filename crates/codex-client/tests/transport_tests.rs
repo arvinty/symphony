@@ -19,7 +19,10 @@ async fn single_frame_round_trip() {
     let parsed: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
     assert_eq!(parsed["method"], "ping");
 
-    client_w.write_all(b"{\"method\":\"pong\"}\n").await.unwrap();
+    client_w
+        .write_all(b"{\"method\":\"pong\"}\n")
+        .await
+        .unwrap();
     let v = transport.recv().await.unwrap();
     assert_eq!(v["method"], "pong");
 }

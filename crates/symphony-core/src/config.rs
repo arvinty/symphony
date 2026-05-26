@@ -190,7 +190,12 @@ impl EffectiveConfig {
                 tracker.endpoint = Some("https://api.linear.app/graphql".into());
             }
             tracker.api_key = tracker.api_key.map(resolve_env_indirection);
-            if tracker.api_key.as_deref().map(str::is_empty).unwrap_or(false) {
+            if tracker
+                .api_key
+                .as_deref()
+                .map(str::is_empty)
+                .unwrap_or(false)
+            {
                 tracker.api_key = None;
             }
         } else if tracker.kind != "file_mock" {

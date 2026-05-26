@@ -19,7 +19,11 @@ struct Cli {
     /// traffic (e.g. when running in a container).
     #[arg(long, env = "LINEAR_CLONE_HOST", default_value = "127.0.0.1")]
     host: IpAddr,
-    #[arg(long, env = "LINEAR_CLONE_WEB", default_value = "crates/linear-clone/static")]
+    #[arg(
+        long,
+        env = "LINEAR_CLONE_WEB",
+        default_value = "crates/linear-clone/static"
+    )]
     web_dir: PathBuf,
 }
 
@@ -33,9 +37,16 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let pool = db::open_and_migrate(&cli.db).await?;
     let schema = build_schema(pool.clone());
-    let state = AppState { pool, schema, token_store: linear_clone::auth::TokenStore::default() };
+    let state = AppState {
+        pool,
+        schema,
+        token_store: linear_clone::auth::TokenStore::default(),
+    };
 
-    let cors = CorsLayer::new().allow_origin(Any).allow_methods(Any).allow_headers(Any);
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
     let api = build_router(state);
     let app: Router = if cli.web_dir.exists() {
         // The web UI uses BrowserRouter, so client-side routes (/board,

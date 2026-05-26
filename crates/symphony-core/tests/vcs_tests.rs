@@ -56,7 +56,10 @@ fn init_workspace_with_remote() -> (TempDir, TempDir) {
     std::fs::write(work.path().join("a.txt"), "hi").unwrap();
     git(work.path(), &["add", "-A"]);
     git(work.path(), &["commit", "-qm", "init"]);
-    git(work.path(), &["remote", "add", "origin", &remote.path().to_string_lossy()]);
+    git(
+        work.path(),
+        &["remote", "add", "origin", &remote.path().to_string_lossy()],
+    );
     (work, remote)
 }
 
@@ -77,7 +80,9 @@ async fn commit_pending_commits_untracked_files() {
     git(work.path(), &["config", "user.email", "t@t"]);
     git(work.path(), &["config", "user.name", "t"]);
     std::fs::write(work.path().join("a.txt"), "hi").unwrap();
-    let sha = commit_pending(work.path(), "Symphony: DEMO-1").await.unwrap();
+    let sha = commit_pending(work.path(), "Symphony: DEMO-1")
+        .await
+        .unwrap();
     assert!(sha.is_some(), "expected a SHA, got None");
     let log = Command::new("git")
         .args(["log", "--oneline"])
@@ -85,7 +90,10 @@ async fn commit_pending_commits_untracked_files() {
         .output()
         .unwrap();
     let s = String::from_utf8(log.stdout).unwrap();
-    assert!(s.contains("Symphony: DEMO-1"), "log did not contain message: {s}");
+    assert!(
+        s.contains("Symphony: DEMO-1"),
+        "log did not contain message: {s}"
+    );
 }
 
 #[tokio::test]
@@ -99,7 +107,9 @@ async fn commit_pending_commits_modified_files() {
     git(work.path(), &["commit", "-qm", "init"]);
     // Modify and commit_pending.
     std::fs::write(work.path().join("a.txt"), "v2").unwrap();
-    let sha = commit_pending(work.path(), "Symphony: DEMO-2").await.unwrap();
+    let sha = commit_pending(work.path(), "Symphony: DEMO-2")
+        .await
+        .unwrap();
     assert!(sha.is_some());
     let log = Command::new("git")
         .args(["log", "--oneline"])
@@ -113,19 +123,27 @@ async fn commit_pending_commits_modified_files() {
 #[tokio::test]
 async fn push_branch_creates_ref_on_remote() {
     let (work, remote) = init_workspace_with_remote();
-    push_branch(work.path(), "origin", "symphony/DEMO-1").await.unwrap();
+    push_branch(work.path(), "origin", "symphony/DEMO-1")
+        .await
+        .unwrap();
     let out = Command::new("git")
         .args(["--git-dir", &remote.path().to_string_lossy(), "show-ref"])
-        .output().unwrap();
+        .output()
+        .unwrap();
     let s = String::from_utf8(out.stdout).unwrap();
-    assert!(s.contains("refs/heads/symphony/DEMO-1"), "ref missing in remote: {s}");
+    assert!(
+        s.contains("refs/heads/symphony/DEMO-1"),
+        "ref missing in remote: {s}"
+    );
 }
 
 #[tokio::test]
 async fn open_pr_uses_gh_shim_and_returns_url() {
     let (work, _r) = init_workspace_with_remote();
     let shim_dir = TempDir::new().unwrap();
-    let shim = shim_dir.path().join(if cfg!(windows) { "gh.cmd" } else { "gh" });
+    let shim = shim_dir
+        .path()
+        .join(if cfg!(windows) { "gh.cmd" } else { "gh" });
     let body = if cfg!(windows) {
         "@echo %* | find \"--head symphony/DEMO-1\" >nul || exit /b 2\r\n@echo {\"url\":\"https://github.com/o/r/pull/42\"}\r\n"
     } else {
@@ -143,7 +161,9 @@ async fn open_pr_uses_gh_shim_and_returns_url() {
     let _path_lock = PATH_LOCK.lock().unwrap();
     let _path_guard = PathGuard::prepend(shim_dir.path());
 
-    let url = open_pr(work.path(), "feat: x", "body", "symphony/DEMO-1").await.unwrap();
+    let url = open_pr(work.path(), "feat: x", "body", "symphony/DEMO-1")
+        .await
+        .unwrap();
     assert_eq!(url, "https://github.com/o/r/pull/42");
 }
 
@@ -164,7 +184,10 @@ async fn pipeline_commit_then_push_then_open_pr() {
     let sha = commit_pending(work.path(), "Symphony: Demo work (DEMO-1)")
         .await
         .unwrap();
-    assert!(sha.is_some(), "commit_pending should have produced a commit");
+    assert!(
+        sha.is_some(),
+        "commit_pending should have produced a commit"
+    );
 
     // Step 2: push the per-issue branch to the remote.
     push_branch(work.path(), "origin", "symphony/DEMO-1")

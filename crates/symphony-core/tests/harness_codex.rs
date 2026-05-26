@@ -340,7 +340,8 @@ async fn require_approval_policy_translates_to_untrusted_on_start() {
     let (codex_client, notifs) = Client::from_halves(c_r, c_w);
     let codex_client = Arc::new(codex_client);
 
-    let captured_policy: Arc<tokio::sync::OnceCell<String>> = Arc::new(tokio::sync::OnceCell::new());
+    let captured_policy: Arc<tokio::sync::OnceCell<String>> =
+        Arc::new(tokio::sync::OnceCell::new());
     let captured = captured_policy.clone();
 
     let server_task = tokio::spawn(async move {
@@ -588,8 +589,7 @@ async fn denied_review_with_operator_deny_skips_override_rpc() {
     let (codex_client, notifs) = Client::from_halves(c_r, c_w);
     let codex_client = Arc::new(codex_client);
 
-    let saw_extra_rpc: Arc<tokio::sync::Mutex<bool>> =
-        Arc::new(tokio::sync::Mutex::new(false));
+    let saw_extra_rpc: Arc<tokio::sync::Mutex<bool>> = Arc::new(tokio::sync::Mutex::new(false));
     let flag = Arc::clone(&saw_extra_rpc);
 
     let server_task = tokio::spawn(async move {
@@ -603,11 +603,8 @@ async fn denied_review_with_operator_deny_skips_override_rpc() {
 
         // Allow some time for an override RPC. If it lands, set the flag.
         let mut line = String::new();
-        let read = tokio::time::timeout(
-            Duration::from_millis(400),
-            reader.read_line(&mut line),
-        )
-        .await;
+        let read =
+            tokio::time::timeout(Duration::from_millis(400), reader.read_line(&mut line)).await;
         if let Ok(Ok(n)) = read {
             if n > 0 {
                 if let Ok(req) = serde_json::from_str::<Value>(line.trim()) {

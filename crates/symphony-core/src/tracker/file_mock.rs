@@ -73,10 +73,7 @@ impl super::Tracker for FileMockTracker {
             .collect())
     }
 
-    async fn fetch_issue_states_by_ids(
-        &self,
-        ids: &[String],
-    ) -> Result<HashMap<String, String>> {
+    async fn fetch_issue_states_by_ids(&self, ids: &[String]) -> Result<HashMap<String, String>> {
         let all = self.read_all().await?;
         let mut map = HashMap::new();
         for i in all {

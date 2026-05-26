@@ -17,8 +17,14 @@ impl PendingApproval {
     pub async fn wait(self, timeout: Duration) -> anyhow::Result<Decision> {
         match tokio::time::timeout(timeout, self.rx).await {
             Ok(Ok(d)) => Ok(d),
-            Ok(Err(_)) => Ok(Decision { allow: false, reason: Some("router_dropped".into()) }),
-            Err(_) => Ok(Decision { allow: false, reason: Some("timeout".into()) }),
+            Ok(Err(_)) => Ok(Decision {
+                allow: false,
+                reason: Some("router_dropped".into()),
+            }),
+            Err(_) => Ok(Decision {
+                allow: false,
+                reason: Some("timeout".into()),
+            }),
         }
     }
 }

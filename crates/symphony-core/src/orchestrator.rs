@@ -131,12 +131,19 @@ impl Orchestrator {
             .as_deref()
             .ok_or_else(|| anyhow::anyhow!("no vcs.remote configured"))?
             .to_string();
-        let prefix = cfg.vcs.branch_prefix.as_deref().unwrap_or("symphony/").to_string();
+        let prefix = cfg
+            .vcs
+            .branch_prefix
+            .as_deref()
+            .unwrap_or("symphony/")
+            .to_string();
         let branch = format!("{prefix}{identifier}");
         let workspace = self.inner.workspace.read().await.clone();
         let workspace_path = workspace.workspace_path_for(identifier);
         if !workspace_path.exists() {
-            return Err(anyhow::anyhow!("workspace not found for issue {identifier}"));
+            return Err(anyhow::anyhow!(
+                "workspace not found for issue {identifier}"
+            ));
         }
         let tracker = self.inner.tracker.read().await.clone();
         let title_issue = tracker
@@ -149,10 +156,12 @@ impl Orchestrator {
             .as_ref()
             .map(|issue| issue.id.clone())
             .unwrap_or_else(|| identifier.to_string());
-        let _ = self.event_bus().send(crate::events::broadcast::OrchestratorEvent::VcsPushed {
-            issue_id: issue_id.clone(),
-            branch: branch.clone(),
-        });
+        let _ = self
+            .event_bus()
+            .send(crate::events::broadcast::OrchestratorEvent::VcsPushed {
+                issue_id: issue_id.clone(),
+                branch: branch.clone(),
+            });
         let title = title_issue
             .as_ref()
             .map(|issue| format!("{}: {}", identifier, issue.title))
@@ -164,10 +173,12 @@ impl Orchestrator {
             .write()
             .await
             .insert(issue_id.clone(), url.clone());
-        let _ = self.event_bus().send(crate::events::broadcast::OrchestratorEvent::PrOpened {
-            issue_id,
-            url: url.clone(),
-        });
+        let _ = self
+            .event_bus()
+            .send(crate::events::broadcast::OrchestratorEvent::PrOpened {
+                issue_id,
+                url: url.clone(),
+            });
         Ok(url)
     }
 
@@ -186,7 +197,11 @@ impl Orchestrator {
         self.inner.refresh.notify_one();
     }
 
-    pub async fn reload(&self, workflow: WorkflowDefinition, config: EffectiveConfig) -> Result<()> {
+    pub async fn reload(
+        &self,
+        workflow: WorkflowDefinition,
+        config: EffectiveConfig,
+    ) -> Result<()> {
         {
             let mut s = self.inner.state.lock().await;
             s.poll_interval_ms = config.polling.interval_ms;
@@ -206,7 +221,10 @@ impl Orchestrator {
         let cfg = self.inner.config.read().await.clone();
         let tracker = self.inner.tracker.read().await.clone();
         let ws = self.inner.workspace.read().await.clone();
-        match tracker.fetch_issues_by_states(&cfg.tracker.terminal_states).await {
+        match tracker
+            .fetch_issues_by_states(&cfg.tracker.terminal_states)
+            .await
+        {
             Ok(issues) => {
                 for i in issues {
                     if let Err(e) = ws.remove(&i.identifier).await {
@@ -242,7 +260,9 @@ impl Orchestrator {
                     let inner = this.clone();
                     tokio::spawn(async move {
                         tokio::time::sleep(Duration::from_millis(req.delay_ms)).await;
-                        inner.handle_retry_due(req.issue_id, req.attempt, req.policy).await;
+                        inner
+                            .handle_retry_due(req.issue_id, req.attempt, req.policy)
+                            .await;
                     });
                 }
             });
@@ -315,7 +335,14 @@ impl Orchestrator {
             s.retry_attempts.remove(&issue.id);
         }
         let cfg = self.inner.config.read().await.clone();
-        let _ = self.inner.run_tx.send(RunRequest { issue, attempt: None, prompt_override: None, follow_up_count: 0, policy: cfg.policy.clone(), phase: RunPhase::Implementer });
+        let _ = self.inner.run_tx.send(RunRequest {
+            issue,
+            attempt: None,
+            prompt_override: None,
+            follow_up_count: 0,
+            policy: cfg.policy.clone(),
+            phase: RunPhase::Implementer,
+        });
     }
 
     async fn run_worker(&self, request: RunRequest) {
@@ -329,14 +356,24 @@ impl Orchestrator {
             Ok(w) => w,
             Err(e) => {
                 tracing::error!(issue_identifier = %issue.identifier, "workspace_failed: {e}");
-                self.fail_and_schedule_retry(&issue, e.to_string(), attempt.unwrap_or(0), request.policy.clone());
+                self.fail_and_schedule_retry(
+                    &issue,
+                    e.to_string(),
+                    attempt.unwrap_or(0),
+                    request.policy.clone(),
+                );
                 return;
             }
         };
 
         if let Err(e) = ws_mgr.before_run(&workspace).await {
             tracing::error!(issue_identifier = %issue.identifier, "before_run_failed: {e}");
-            self.fail_and_schedule_retry(&issue, e.to_string(), attempt.unwrap_or(0), request.policy.clone());
+            self.fail_and_schedule_retry(
+                &issue,
+                e.to_string(),
+                attempt.unwrap_or(0),
+                request.policy.clone(),
+            );
             return;
         }
 
@@ -348,7 +385,12 @@ impl Orchestrator {
                 Ok(_) => "You are working on an issue from the issue tracker.".to_string(),
                 Err(e) => {
                     tracing::error!(issue_identifier = %issue.identifier, "prompt_render_failed: {e}");
-                    self.fail_and_schedule_retry(&issue, e.to_string(), attempt.unwrap_or(0), request.policy.clone());
+                    self.fail_and_schedule_retry(
+                        &issue,
+                        e.to_string(),
+                        attempt.unwrap_or(0),
+                        request.policy.clone(),
+                    );
                     return;
                 }
             }
@@ -446,9 +488,15 @@ impl Orchestrator {
                     let tracker = self.inner.tracker.read().await.clone();
                     let states = tracker.fetch_issue_states_by_ids(&[issue.id.clone()]).await;
                     let new_state = states.ok().and_then(|m| m.get(&issue.id).cloned());
-                    let still_active = new_state.as_deref().map(|s| {
-                        cfg.tracker.active_states.iter().any(|a| a.eq_ignore_ascii_case(s))
-                    }).unwrap_or(false);
+                    let still_active = new_state
+                        .as_deref()
+                        .map(|s| {
+                            cfg.tracker
+                                .active_states
+                                .iter()
+                                .any(|a| a.eq_ignore_ascii_case(s))
+                        })
+                        .unwrap_or(false);
                     if !still_active {
                         break;
                     }
@@ -475,12 +523,15 @@ impl Orchestrator {
                 // anything pending so push_branch has something to push.
                 let bus = self.event_bus();
                 let commit_msg = format!("Symphony: {} ({})", issue.title, issue.identifier);
-                let auto_commit_ok = match crate::vcs::commit_pending(&workspace.path, &commit_msg).await {
+                let auto_commit_ok = match crate::vcs::commit_pending(&workspace.path, &commit_msg)
+                    .await
+                {
                     Ok(Some(sha)) => {
-                        let _ = bus.send(crate::events::broadcast::OrchestratorEvent::AutoCommitted {
-                            issue_id: issue.id.clone(),
-                            sha,
-                        });
+                        let _ =
+                            bus.send(crate::events::broadcast::OrchestratorEvent::AutoCommitted {
+                                issue_id: issue.id.clone(),
+                                sha,
+                            });
                         true
                     }
                     Ok(None) => true,
@@ -500,14 +551,24 @@ impl Orchestrator {
                         let branch = format!("{prefix}{}", issue.identifier);
                         match crate::vcs::push_branch(&workspace.path, remote, &branch).await {
                             Ok(()) => {
-                                let _ = bus.send(crate::events::broadcast::OrchestratorEvent::VcsPushed {
-                                    issue_id: issue.id.clone(),
-                                    branch: branch.clone(),
-                                });
+                                let _ = bus.send(
+                                    crate::events::broadcast::OrchestratorEvent::VcsPushed {
+                                        issue_id: issue.id.clone(),
+                                        branch: branch.clone(),
+                                    },
+                                );
                                 if cfg.vcs.auto_open_pr {
                                     let title = format!("{}: {}", issue.identifier, issue.title);
-                                    let body = format!("Authored by Symphony for {}.", issue.identifier);
-                                    match crate::vcs::open_pr(&workspace.path, &title, &body, &branch).await {
+                                    let body =
+                                        format!("Authored by Symphony for {}.", issue.identifier);
+                                    match crate::vcs::open_pr(
+                                        &workspace.path,
+                                        &title,
+                                        &body,
+                                        &branch,
+                                    )
+                                    .await
+                                    {
                                         Ok(url) => {
                                             self.inner
                                                 .pr_urls
@@ -535,11 +596,13 @@ impl Orchestrator {
                                 }
                             }
                             Err(e) => {
-                                let _ = bus.send(crate::events::broadcast::OrchestratorEvent::VcsError {
-                                    issue_id: issue.id.clone(),
-                                    stage: "push".into(),
-                                    message: e.to_string(),
-                                });
+                                let _ = bus.send(
+                                    crate::events::broadcast::OrchestratorEvent::VcsError {
+                                        issue_id: issue.id.clone(),
+                                        stage: "push".into(),
+                                        message: e.to_string(),
+                                    },
+                                );
                             }
                         }
                     }
@@ -561,13 +624,7 @@ impl Orchestrator {
                 && cfg.reviewer.enabled
             {
                 // Link-PR follow-up succeeded. Dispatch the reviewer.
-                let pr_url = self
-                    .inner
-                    .pr_urls
-                    .read()
-                    .await
-                    .get(&issue.id)
-                    .cloned();
+                let pr_url = self.inner.pr_urls.read().await.get(&issue.id).cloned();
                 if let Some(pr_url) = pr_url {
                     let template = cfg
                         .reviewer
@@ -622,7 +679,13 @@ impl Orchestrator {
                 // Configurable continuation: the agent said it's done, but the
                 // workflow asks us to dispatch another turn anyway. Off by
                 // default — believe the agent's TurnCompleted.
-                self.schedule_retry(&issue, 1, CONTINUATION_DELAY_MS, None, request.policy.clone());
+                self.schedule_retry(
+                    &issue,
+                    1,
+                    CONTINUATION_DELAY_MS,
+                    None,
+                    request.policy.clone(),
+                );
                 preserve_session_for_next_dispatch = true;
             } else {
                 // Success with no follow-up to dispatch and continuation off.
@@ -641,7 +704,12 @@ impl Orchestrator {
             );
             released_terminally = true;
         } else {
-            self.fail_and_schedule_retry(&issue, last_error.unwrap_or_else(|| "unknown".into()), attempt.unwrap_or(0), request.policy.clone());
+            self.fail_and_schedule_retry(
+                &issue,
+                last_error.unwrap_or_else(|| "unknown".into()),
+                attempt.unwrap_or(0),
+                request.policy.clone(),
+            );
             preserve_session_for_next_dispatch = true;
         }
 
@@ -665,7 +733,12 @@ impl Orchestrator {
         };
         if let Some(entry) = removed_entry {
             let dur = (Utc::now() - entry.started_at).num_milliseconds().max(0) as f64 / 1000.0;
-            self.inner.state.lock().await.codex_totals.seconds_running_completed += dur;
+            self.inner
+                .state
+                .lock()
+                .await
+                .codex_totals
+                .seconds_running_completed += dur;
             if preserve_session_for_next_dispatch {
                 if let Some(session) = entry.session {
                     self.inner
@@ -682,7 +755,9 @@ impl Orchestrator {
         let mut s = self.inner.state.lock().await;
 
         let token_delta = {
-            let Some(running) = s.running.get_mut(issue_id) else { return };
+            let Some(running) = s.running.get_mut(issue_id) else {
+                return;
+            };
             let session = running.session.get_or_insert(LiveSession {
                 session_id: format!(
                     "{}-{}",
@@ -728,7 +803,13 @@ impl Orchestrator {
         }
     }
 
-    fn fail_and_schedule_retry(&self, issue: &Issue, err: String, prev_attempt: u32, policy: crate::policy::Policy) {
+    fn fail_and_schedule_retry(
+        &self,
+        issue: &Issue,
+        err: String,
+        prev_attempt: u32,
+        policy: crate::policy::Policy,
+    ) {
         let attempt = prev_attempt + 1;
         // Read max backoff from a snapshot via blocking try_lock — we can't await here.
         // Use the unbounded retry channel and let the dispatcher compute the cap when it
@@ -738,7 +819,14 @@ impl Orchestrator {
         self.schedule_retry(issue, attempt, backoff, Some(err), policy);
     }
 
-    fn schedule_retry(&self, issue: &Issue, attempt: u32, delay_ms: u64, err: Option<String>, policy: crate::policy::Policy) {
+    fn schedule_retry(
+        &self,
+        issue: &Issue,
+        attempt: u32,
+        delay_ms: u64,
+        err: Option<String>,
+        policy: crate::policy::Policy,
+    ) {
         // Cap delay against the configured max backoff using a try_read snapshot if possible;
         // otherwise the dispatcher will at least cap to a hard ceiling.
         let capped = if let Ok(cfg) = self.inner.config.try_read() {
@@ -790,7 +878,12 @@ impl Orchestrator {
         let _ = self.inner.retry_tx.send(req);
     }
 
-    async fn handle_retry_due(&self, issue_id: String, attempt: u32, policy: crate::policy::Policy) {
+    async fn handle_retry_due(
+        &self,
+        issue_id: String,
+        attempt: u32,
+        policy: crate::policy::Policy,
+    ) {
         let cfg = self.inner.config.read().await.clone();
         let tracker = self.inner.tracker.read().await.clone();
         let candidates = match tracker.fetch_candidate_issues().await {
@@ -808,7 +901,11 @@ impl Orchestrator {
                 s.claimed.remove(&issue_id);
             }
             Some(issue) => {
-                let active = cfg.tracker.active_states.iter().any(|a| a.eq_ignore_ascii_case(&issue.state));
+                let active = cfg
+                    .tracker
+                    .active_states
+                    .iter()
+                    .any(|a| a.eq_ignore_ascii_case(&issue.state));
                 if !active {
                     let mut s = self.inner.state.lock().await;
                     s.retry_attempts.remove(&issue_id);
@@ -817,14 +914,27 @@ impl Orchestrator {
                 }
                 let running_count = self.inner.state.lock().await.running.len() as u32;
                 if running_count >= cfg.agent.max_concurrent_agents {
-                    self.schedule_retry(&issue, attempt, 5_000, Some("no available orchestrator slots".into()), policy);
+                    self.schedule_retry(
+                        &issue,
+                        attempt,
+                        5_000,
+                        Some("no available orchestrator slots".into()),
+                        policy,
+                    );
                     return;
                 }
                 {
                     let mut s = self.inner.state.lock().await;
                     s.retry_attempts.remove(&issue_id);
                 }
-                let _ = self.inner.run_tx.send(RunRequest { issue, attempt: Some(attempt), prompt_override: None, follow_up_count: 0, policy, phase: RunPhase::Implementer });
+                let _ = self.inner.run_tx.send(RunRequest {
+                    issue,
+                    attempt: Some(attempt),
+                    prompt_override: None,
+                    follow_up_count: 0,
+                    policy,
+                    phase: RunPhase::Implementer,
+                });
             }
         }
     }
@@ -869,7 +979,15 @@ impl Orchestrator {
             }
         }
 
-        let ids: Vec<String> = self.inner.state.lock().await.running.keys().cloned().collect();
+        let ids: Vec<String> = self
+            .inner
+            .state
+            .lock()
+            .await
+            .running
+            .keys()
+            .cloned()
+            .collect();
         if ids.is_empty() {
             return Ok(());
         }
@@ -880,8 +998,18 @@ impl Orchestrator {
                 return Ok(());
             }
         };
-        let term_lower: Vec<String> = cfg.tracker.terminal_states.iter().map(|s| s.to_lowercase()).collect();
-        let act_lower: Vec<String> = cfg.tracker.active_states.iter().map(|s| s.to_lowercase()).collect();
+        let term_lower: Vec<String> = cfg
+            .tracker
+            .terminal_states
+            .iter()
+            .map(|s| s.to_lowercase())
+            .collect();
+        let act_lower: Vec<String> = cfg
+            .tracker
+            .active_states
+            .iter()
+            .map(|s| s.to_lowercase())
+            .collect();
         for id in ids {
             let st_opt = states.get(&id).cloned();
             match st_opt {
@@ -921,7 +1049,8 @@ async fn mint_linear_token(cfg: &EffectiveConfig, issue_id: &str) -> Option<Stri
     let cli = reqwest::Client::new();
     // endpoint is `<base>/graphql` — mint URL is `<base>/admin/tokens`.
     let mint_url = endpoint.trim_end_matches("/graphql").to_string() + "/admin/tokens";
-    let resp = cli.post(&mint_url)
+    let resp = cli
+        .post(&mint_url)
         .header("x-admin-token", admin)
         .json(&serde_json::json!({"issue_id": issue_id}))
         .send()
@@ -1036,7 +1165,11 @@ pub fn build_tracker(cfg: &EffectiveConfig) -> Result<Arc<dyn Tracker>> {
                 .endpoint
                 .clone()
                 .unwrap_or_else(|| "https://api.linear.app/graphql".into());
-            let api_key = cfg.tracker.api_key.clone().ok_or(SymphonyError::MissingTrackerApiKey)?;
+            let api_key = cfg
+                .tracker
+                .api_key
+                .clone()
+                .ok_or(SymphonyError::MissingTrackerApiKey)?;
             let slug = cfg
                 .tracker
                 .project_slug
@@ -1050,11 +1183,9 @@ pub fn build_tracker(cfg: &EffectiveConfig) -> Result<Arc<dyn Tracker>> {
             )?))
         }
         "file_mock" => {
-            let path = cfg
-                .tracker
-                .endpoint
-                .clone()
-                .ok_or_else(|| SymphonyError::ConfigInvalid("file_mock requires endpoint=path-to-json".into()))?;
+            let path = cfg.tracker.endpoint.clone().ok_or_else(|| {
+                SymphonyError::ConfigInvalid("file_mock requires endpoint=path-to-json".into())
+            })?;
             Ok(Arc::new(crate::tracker::file_mock::FileMockTracker::new(
                 path.into(),
                 cfg.tracker.active_states.clone(),
